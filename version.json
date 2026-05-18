@@ -2,7 +2,7 @@
   "version": "3.2.0",
   "build_date": "2026-05-18",
   "build_number": 1,
-  "github_repo": "ctlxh1341078783/XianyuTool",
+  "github_repo": "ctlxh1341078783/xianyu_noroot_tool",
   "changelog": [
     "新增应用图标和打包图标",
     "新增安装程序 (installer.exe)",
