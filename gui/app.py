@@ -46,10 +46,11 @@ class XianyuApp:
         # 引擎（延迟初始化）
         self._engines = {}
 
-        # 构建UI：左右分栏（Notebook | 日志面板）
+        # 构建UI：菜单 → 状态栏 → 工具栏 → 左右分栏
         self._build_menu()
         self._build_top_bar()
-        self._build_main_area()  # 替代 _build_notebook + _build_log_panel
+        self._build_toolbar()
+        self._build_main_area()
 
         # 注册日志回调
         self.logger.add_gui_callback(self._on_log)
@@ -111,6 +112,19 @@ class XianyuApp:
         self.status_bar = StatusBar(self.root)
         self.status_bar.pack(fill=tk.X, side=tk.TOP)
         ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.TOP)
+
+    def _build_toolbar(self):
+        """主界面工具栏 — 常用操作一目了然"""
+        bar = tk.Frame(self.root, bg=SURF, padx=8, pady=4)
+        bar.pack(fill=tk.X, side=tk.TOP)
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.TOP)
+
+        tk.Button(bar, text="检查更新", command=self._check_for_updates,
+                  bg=SUCC, fg="white", font=FONTS["ui"], relief=tk.FLAT,
+                  cursor="hand2", padx=14, pady=4).pack(side=tk.LEFT, padx=2)
+        tk.Button(bar, text="关于", command=self._show_about,
+                  bg=ACC, fg="white", font=FONTS["ui"], relief=tk.FLAT,
+                  cursor="hand2", padx=14, pady=4).pack(side=tk.LEFT, padx=2)
 
     def _build_main_area(self):
         """左右分栏：左侧Notebook(5个Tab) | 右侧日志面板"""
@@ -227,8 +241,7 @@ class XianyuApp:
 
         win = tk.Toplevel(self.root, bg=SURF)
         win.title("关于")
-        win.geometry("420x380")
-        win.resizable(False, False)
+        win.resizable(True, True)
         win.transient(self.root)
         win.grab_set()
 
