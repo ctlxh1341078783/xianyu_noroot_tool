@@ -121,20 +121,14 @@ class UninstallerWindow:
         self.status_var.set("正在清理文件...")
 
         if IS_WIN:
-            bat = f'''@echo off
-chcp 65001 >nul
-echo 正在卸载...
-ping -n 4 127.0.0.1 >nul
-rd /s /q "{install_dir}"
-del "%~f0"
-'''
-            tmpbat = Path(tempfile.gettempdir()) / "_xianyu_uninst.bat"
-            tmpbat.write_text(bat, encoding="utf-8")
+            ps_cmd = (
+                f'Start-Sleep -Seconds 3; '
+                f'Remove-Item -Path "{install_dir}" -Recurse -Force -ErrorAction SilentlyContinue'
+            )
             subprocess.Popen(
-                ["cmd", "/c", str(tmpbat)],
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
                 creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
                 close_fds=True,
-                cwd=str(Path(tempfile.gettempdir())),
             )
         else:
             script = f'''#!/bin/bash
