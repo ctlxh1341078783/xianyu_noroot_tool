@@ -51,7 +51,6 @@ class XianyuApp:
         # 构建UI：菜单 → 状态栏 → 工具栏 → 左右分栏
         self._build_menu()
         self._build_top_bar()
-        self._build_toolbar()
         self._build_main_area()
 
         # 注册日志回调
@@ -232,6 +231,8 @@ class XianyuApp:
         file_menu.add_command(label="退出", command=self._on_close)
         menubar.add_cascade(label="文件", menu=file_menu)
         help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="检查更新", command=self._check_for_updates)
+        help_menu.add_separator()
         help_menu.add_command(label="关于", command=self._show_about)
         menubar.add_cascade(label="帮助", menu=help_menu)
         self.root.config(menu=menubar)
@@ -240,17 +241,6 @@ class XianyuApp:
         self.status_bar = StatusBar(self.root)
         self.status_bar.pack(fill=tk.X, side=tk.TOP)
         ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.TOP)
-
-    def _build_toolbar(self):
-        """主界面工具栏 — 常用操作一目了然"""
-        bar = tk.Frame(self.root, bg=SURF, padx=8, pady=4)
-        bar.pack(fill=tk.X, side=tk.TOP)
-        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.TOP)
-
-        ttk.Button(bar, text="检查更新", command=self._check_for_updates,
-                   style="Success.TButton").pack(side=tk.LEFT, padx=2)
-        ttk.Button(bar, text="关于", command=self._show_about,
-                   style="Accent.TButton").pack(side=tk.LEFT, padx=2)
 
     def _build_main_area(self):
         """左右分栏：左侧Notebook(5个Tab) | 右侧日志面板"""
