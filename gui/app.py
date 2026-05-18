@@ -298,42 +298,60 @@ class XianyuApp:
 
         threading.Thread(target=self._check_updates_github, args=(repo,), daemon=True).start()
 
-    def _check_updates_github(self, repo: str):
-        """后台从 GitHub API 查询最新 Release"""
-        api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+    def _build_proxy_strategies(self):
+        """构建代理尝试策略列表：系统代理 → 常见端口 → 直连"""
+        strategies = []
 
-        # 构建代理 opener（自动检测系统代理，解决 Clash 等代理软件下 Python 不走代理的问题）
-        proxy_opener = None
+        # 1. 系统代理（Win: IE设置/注册表, Mac: 系统网络设置）
         proxies = urllib.request.getproxies()
         if proxies:
-            proxy_opener = urllib.request.build_opener(
-                urllib.request.ProxyHandler(proxies))
-        else:
-            # 备选：手动检查常见代理端口
-            for port in [7890, 10809, 1080, 8080]:
-                try:
-                    handler = urllib.request.ProxyHandler({
-                        "https": f"http://127.0.0.1:{port}",
-                        "http": f"http://127.0.0.1:{port}",
-                    })
-                    proxy_opener = urllib.request.build_opener(handler)
-                    break
-                except Exception:
-                    continue
+            strategies.append(("系统代理",
+                urllib.request.build_opener(urllib.request.ProxyHandler(proxies))))
 
-        try:
-            req = urllib.request.Request(api_url)
-            req.add_header("Accept", "application/vnd.github+json")
-            req.add_header("User-Agent", "XianyuTool-Update")
-            opener = proxy_opener or urllib.request.build_opener()
-            with opener.open(req, timeout=15) as resp:
-                release = json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
+        # 2. 常见代理端口（Clash=7890, v2ray=10809, SOCKS5=1080, 通用=8080）
+        common_ports = [7890, 10809, 1080, 8080]
+        for port in common_ports:
+            strategies.append((f"127.0.0.1:{port}",
+                urllib.request.build_opener(urllib.request.ProxyHandler({
+                    "https": f"http://127.0.0.1:{port}",
+                    "http": f"http://127.0.0.1:{port}",
+                }))))
+
+        # 3. 直连（TUN模式/已翻墙/国内可访问）
+        strategies.append(("直连", urllib.request.build_opener()))
+
+        return strategies
+
+    def _check_updates_github(self, repo: str):
+        """后台从 GitHub API 查询最新 Release — 自动探测代理"""
+        api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+
+        # 构建请求
+        req = urllib.request.Request(api_url)
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("User-Agent", "XianyuTool-Update")
+
+        # 策略链：依次尝试，哪条通走哪条
+        release = None
+        last_error = ""
+
+        strategies = self._build_proxy_strategies()
+
+        for name, opener in strategies:
+            try:
+                with opener.open(req, timeout=5) as resp:
+                    release = json.loads(resp.read().decode("utf-8"))
+                break
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        if release is None:
+            err_msg = last_error or "未知错误"
             self.root.after(0, lambda: [
                 messagebox.showwarning("检查失败",
-                    f"无法连接到 GitHub，请检查网络。\n\n"
-                    f"如果用 Clash/机场，请确认 Clash 开启了系统代理。\n\n"
-                    f"错误: {e}\n\n将切换到手动选择模式。"),
+                    f"无法连接到 GitHub，已尝试直连和代理均失败。\n\n"
+                    f"错误: {err_msg}\n\n将切换到手动选择模式。"),
                 self._check_updates_manual()
             ])
             return
