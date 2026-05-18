@@ -1,12 +1,14 @@
 """
 闲鱼数据采集分析工具 — 卸载程序（Windows / macOS）
 彻底清除：文件、快捷方式、开始菜单、注册表
+自清洁：复制自身到 %TEMP%，从外部删除整个安装目录
 """
 import sys
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -14,6 +16,25 @@ from tkinter import ttk, messagebox
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 APP_NAME = "闲鱼数据采集分析工具"
+
+
+def run_cleanup(install_dir: str):
+    """在 %TEMP% 中运行，等待原进程退出后删除整个安装目录"""
+    time.sleep(2)
+    try:
+        shutil.rmtree(install_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "--cleanup":
+        run_cleanup(sys.argv[2])
+        sys.exit(0)
+
+    app = UninstallerWindow()
+    app.run()
+
 
 class UninstallerWindow:
     def __init__(self):
@@ -87,14 +108,9 @@ class UninstallerWindow:
             self.root.update()
             self._remove_registry()
 
-        self.status_var.set("正在清理文件...")
+        self.status_var.set("正在卸载...")
         self.root.update()
-        self._delete_files()
-
-        self.root.config(cursor="")
-        messagebox.showinfo("卸载完成", "程序已卸载。\n部分文件将在系统重启后彻底清除。")
-        self.root.destroy()
-        sys.exit(0)
+        self._self_destruct()
 
     def _remove_shortcuts(self):
         if IS_WIN:
@@ -131,35 +147,20 @@ class UninstallerWindow:
             except OSError:
                 pass
 
-    def _delete_files(self):
-        """删除安装目录中的文件，无法删除的（自身EXE）标记为重启后清除"""
+    def _self_destruct(self):
         install_dir = str(self._install_dir)
         frozen = getattr(sys, 'frozen', False)
-        my_exe = os.path.normpath(sys.executable) if frozen else os.path.normpath(__file__)
+        my_exe = str(sys.executable) if frozen else __file__
 
         if IS_WIN:
-            for root, dirs, files in os.walk(install_dir, topdown=False):
-                for name in files:
-                    fp = os.path.normpath(os.path.join(root, name))
-                    if fp == my_exe:
-                        continue
-                    try:
-                        os.chmod(fp, 0o777)
-                        os.remove(fp)
-                    except Exception:
-                        pass
-                for name in dirs:
-                    dp = os.path.join(root, name)
-                    try:
-                        os.rmdir(dp)
-                    except Exception:
-                        pass
-
+            tmp_exe = Path(tempfile.gettempdir()) / "_xianyu_uninst_cleanup.exe"
             try:
-                import ctypes
-                windll = ctypes.windll.kernel32
-                windll.MoveFileExW(install_dir, None, 0x4)
-                windll.MoveFileExW(my_exe, None, 0x4)
+                shutil.copy2(my_exe, str(tmp_exe))
+                subprocess.Popen(
+                    [str(tmp_exe), "--cleanup", install_dir],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    close_fds=True,
+                )
             except Exception:
                 pass
         else:
@@ -178,12 +179,9 @@ rm -f "$0"
             except Exception:
                 pass
 
-    def run(self):
-        self.root.mainloop()
+        self.root.destroy()
+        sys.exit(0)
 
-def main():
-    app = UninstallerWindow()
-    app.run()
 
 if __name__ == "__main__":
     main()
