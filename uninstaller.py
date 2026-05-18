@@ -18,8 +18,9 @@ class UninstallerWindow:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("闲鱼数据采集分析工具 — 卸载")
-        self.root.geometry("480x300")
-        self.root.resizable(False, False)
+        self.root.geometry("500x360")
+        self.root.resizable(True, True)
+        self.root.minsize(460, 300)
         self._install_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
         self._build_ui()
 
@@ -121,16 +122,19 @@ class UninstallerWindow:
 
         if IS_WIN:
             bat = f'''@echo off
-timeout /t 2 >nul
+chcp 65001 >nul
+echo 正在卸载...
+ping -n 4 127.0.0.1 >nul
 rd /s /q "{install_dir}"
 del "%~f0"
 '''
             tmpbat = Path(tempfile.gettempdir()) / "_xianyu_uninst.bat"
-            tmpbat.write_text(bat, encoding="ascii")
+            tmpbat.write_text(bat, encoding="utf-8")
             subprocess.Popen(
                 ["cmd", "/c", str(tmpbat)],
-                creationflags=subprocess.CREATE_NEW_CONSOLE | 0x00000008,
+                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
                 close_fds=True,
+                cwd=str(Path(tempfile.gettempdir())),
             )
         else:
             script = f'''#!/bin/bash

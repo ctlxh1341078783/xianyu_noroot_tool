@@ -74,8 +74,9 @@ class InstallerWindow:
         self.root = tk.Tk()
         ver = load_version().get("version", "3.2.0")
         self.root.title(f"闲鱼数据采集分析工具 v{ver} — 安装程序")
-        self.root.geometry("540x400")
-        self.root.resizable(False, False)
+        self.root.geometry("600x460")
+        self.root.resizable(True, True)
+        self.root.minsize(500, 400)
 
         self._installing = False
         self._build_ui()

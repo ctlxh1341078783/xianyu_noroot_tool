@@ -20,7 +20,7 @@ pyinstaller build_uninstaller.spec --noconfirm
 
 echo ""
 echo "[4/5] 复制卸载程序到主应用目录..."
-UNINST_SRC="dist/闲鱼工具卸载程序/闲鱼工具卸载程序"
+UNINST_SRC="dist/闲鱼工具卸载程序"
 UNINST_DST="dist/闲鱼数据采集分析工具/"
 if [ -f "$UNINST_SRC" ]; then
     cp "$UNINST_SRC" "$UNINST_DST"

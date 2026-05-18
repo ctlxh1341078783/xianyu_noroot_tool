@@ -21,7 +21,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo.
 echo [4/5] 复制卸载程序到 dist...
-copy /Y "dist\闲鱼工具卸载程序\闲鱼工具卸载程序.exe" "dist\闲鱼数据采集分析工具\"
+copy /Y "dist\闲鱼工具卸载程序.exe" "dist\闲鱼数据采集分析工具\"
 if %errorlevel% neq 0 (
     echo 警告: 复制卸载程序失败，安装包将不含卸载程序
 )
