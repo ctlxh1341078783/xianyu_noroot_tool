@@ -1,18 +1,22 @@
-"""一次性工具：将 PNG 图标转为 ICO 多尺寸格式"""
+"""开发工具：将 PNG 图标转为 ICO 多尺寸格式（仅在 PNG 更新时需要运行）"""
 from PIL import Image
-import os
-import sys
+from pathlib import Path
 
 def main():
-    png_path = os.path.expanduser(r"C:\Users\tao\Downloads\闲鱼采集工具图标设计.png")
-    out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+    project_root = Path(__file__).parent.parent
+    assets_dir = project_root / "assets"
+    png_path = assets_dir / "icon_source.png"
+    ico_path = assets_dir / "app_icon.ico"
 
-    if not os.path.exists(png_path):
-        print(f"图标文件不存在: {png_path}")
-        sys.exit(1)
+    # ICO 已存在且 PNG 源不在 → 无需转换
+    if ico_path.exists() and not png_path.exists():
+        print(f"ICO 已存在，跳过转换 ({ico_path})")
+        return
 
-    os.makedirs(out_dir, exist_ok=True)
-    ico_path = os.path.join(out_dir, "app_icon.ico")
+    if not png_path.exists():
+        print(f"请将图标 PNG 放到 {png_path}")
+        print(f"或直接使用现有的 {ico_path}")
+        return
 
     print(f"读取: {png_path}")
     img = Image.open(png_path)
@@ -21,13 +25,13 @@ def main():
     sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
     icons = []
     for s in sizes:
-        r = img.resize(s, Image.LANCZOS)
-        icons.append(r)
+        icons.append(img.resize(s, Image.LANCZOS))
         print(f"  生成 {s[0]}x{s[1]}")
 
-    icons[0].save(ico_path, format="ICO", sizes=[(i.width, i.height) for i in icons],
+    icons[0].save(ico_path, format="ICO",
+                  sizes=[(i.width, i.height) for i in icons],
                   append_images=icons[1:])
-    size_kb = os.path.getsize(ico_path) / 1024
+    size_kb = ico_path.stat().st_size / 1024
     print(f"已保存: {ico_path} ({size_kb:.0f} KB)")
 
 if __name__ == "__main__":
