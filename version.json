@@ -1,0 +1,16 @@
+{
+  "version": "3.2.0",
+  "build_date": "2026-05-18",
+  "build_number": 1,
+  "github_repo": "ctlxh1341078783/XianyuTool",
+  "changelog": [
+    "新增应用图标和打包图标",
+    "新增安装程序 (installer.exe)",
+    "新增卸载程序 (uninstaller.exe)",
+    "新增检查更新功能（含进度条）",
+    "修复 soldCount 解析 (JS _parseSoldLabel)",
+    "修复评分模型从搜索层取销量",
+    "修复定时推送评分字段匹配",
+    "修复定时推送仅导出+Webhook"
+  ]
+}

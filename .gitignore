@@ -1,0 +1,23 @@
+# 构建产物
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.pyc
+
+# 虚拟环境
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 敏感文件（如果有）
+.env
+*.log

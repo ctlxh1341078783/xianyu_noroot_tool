@@ -1,0 +1,73 @@
+{
+  "devices": [
+    {
+      "name": "Redmi_Note10Pro",
+      "adb_addr": "sceain7t6t4pjb7p",
+      "type": "usb",
+      "frida_server_path": "/data/local/tmp/frida-server-16.7.19-android-x86",
+      "idlefish_pkg": "com.taobao.idlefish",
+      "use_gadget": true,
+      "gadget_port": 27042
+    }
+  ],
+  "api": {
+    "zhipu_api_key": "",
+    "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=915cc39b-eb16-41c8-a0b9-34130442b930"
+  },
+  "collection": {
+    "search_pages": 10,
+    "hs_pages": 3,
+    "detail_max": 5,
+    "comment_max": 3,
+    "rate_search": [
+      4,
+      8
+    ],
+    "rate_detail": [
+      3,
+      6
+    ],
+    "rate_comment": [
+      3,
+      6
+    ],
+    "rate_market": [
+      3,
+      5
+    ],
+    "rate_keyword": [
+      8,
+      15
+    ],
+    "kw_push_threshold": 75,
+    "pd_push_threshold": 75
+  },
+  "scoring": {
+    "keyword_grade_thresholds": {
+      "S": 90,
+      "A": 75,
+      "B": 55,
+      "C": 35,
+      "D": 0
+    },
+    "product_grade_thresholds": {
+      "S": 90,
+      "A": 75,
+      "B": 55,
+      "C": 40,
+      "D": 0
+    },
+    "precheck_min_uv": 200,
+    "precheck_max_price_drop": -20
+  },
+  "supply_finder": {
+    "score_threshold": 75,
+    "sim_threshold": 0.8,
+    "scroll_pages": 5,
+    "max_items": 20,
+    "use_img_search": true,
+    "delay_between_products": 8,
+    "pause_every": 5,
+    "pause_duration": 60
+  }
+}

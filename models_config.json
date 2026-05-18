@@ -1,0 +1,122 @@
+{
+  "_comment": "选词模型 + 选品模型参数配置，修改后无需重启即可生效",
+
+  "keyword_model": {
+    "total_score": 100,
+    "grades": {
+      "S": 80,
+      "A": 65,
+      "B": 50,
+      "C": 0
+    },
+    "dimensions": {
+      "demand_scale": {
+        "weight": 15,
+        "description": "需求规模：有多少人来买",
+        "params": { "max_uv_per_day": 50000 }
+      },
+      "deal_efficiency": {
+        "weight": 30,
+        "description": "成交效率：能不能快速卖出",
+        "params": { "same_day_weight": 15, "no_bargain_weight": 15 }
+      },
+      "profit_certainty": {
+        "weight": 25,
+        "description": "利润确定性：卖出去能赚多少",
+        "params": {
+          "bargain_score_thresholds": [5, 15, 25],
+          "bargain_scores": [15, 10, 5, 0],
+          "profit_space_thresholds": [200, 100, 50],
+          "profit_scores": [10, 6, 3, 0]
+        }
+      },
+      "competition": {
+        "weight": 20,
+        "description": "竞争格局：多少人在跟你抢生意",
+        "params": {
+          "ratio_thresholds": [2, 5, 10, 20],
+          "ratio_scores": [20, 15, 8, 4, 0]
+        }
+      },
+      "trend_signal": {
+        "weight": 10,
+        "description": "趋势信号：在上升还是在下降",
+        "params": {
+          "hot_bullish_score": 4,
+          "hot_bullish_threshold": 50,
+          "price_trend_score": 4,
+          "price_trend_threshold": 0,
+          "hot_spot_score": 2,
+          "hot_spot_threshold": 1.0
+        }
+      }
+    }
+  },
+
+  "product_model": {
+    "total_score": 100,
+    "grades": {
+      "S": 80,
+      "A": 65,
+      "B": 50,
+      "C": 35,
+      "D": 0
+    },
+    "dimensions": {
+      "demand_signal": {
+        "weight": 20,
+        "description": "需求信号：有没有人想要这东西",
+        "params": {
+          "browse_thresholds": [10000, 5000, 1000, 100],
+          "browse_scores": [8, 6, 4, 2, 0],
+          "collect_thresholds": [100, 50, 10, 1],
+          "collect_scores": [7, 5, 3, 1, 0],
+          "want_thresholds": [100, 50, 10, 1],
+          "want_scores": [5, 3, 2, 1, 0]
+        }
+      },
+      "price_advantage": {
+        "weight": 25,
+        "description": "价格优势：定这个价格能不能又快又赚地卖出去",
+        "params": {
+          "premium_thresholds": [-20, -10, 0, 10, 20],
+          "premium_scores": [15, 12, 10, 6, 3, 0],
+          "profit_ratio_thresholds": [1.5, 1.3, 1.2, 1.1],
+          "profit_ratio_scores": [10, 8, 6, 3, 0]
+        }
+      },
+      "seller_verification": {
+        "weight": 25,
+        "description": "卖家验证：参考同类成功卖家的特征",
+        "params": {
+          "sold_thresholds": [5000, 1000, 500, 100, 10],
+          "sold_scores": [10, 8, 6, 4, 2, 0],
+          "good_rate_thresholds": [99, 97, 95, 90, 80],
+          "good_rate_scores": [8, 6, 5, 3, 1, 0],
+          "reply_rate_thresholds": [95, 80, 50],
+          "reply_rate_scores": [4, 3, 1, 0],
+          "stock_count_thresholds": [50, 10],
+          "stock_count_scores": [3, 2, 0]
+        }
+      },
+      "timeliness": {
+        "weight": 15,
+        "description": "时效性：商品新鲜度",
+        "params": {
+          "shelf_day_thresholds": [3, 7, 30, 90],
+          "shelf_day_scores": [10, 8, 5, 2, 0],
+          "peak_hour_score": 5
+        }
+      },
+      "supply_attribute": {
+        "weight": 15,
+        "description": "货源属性：能不能找到稳定货源来卖",
+        "params": {
+          "product_type_scores": { "standard": 10, "semi_standard": 7, "non_standard": 2, "unknown": 5 },
+          "price_volatility_thresholds": [10, 25],
+          "price_volatility_scores": [5, 3, 0]
+        }
+      }
+    }
+  }
+}
