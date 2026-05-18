@@ -9,7 +9,9 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 
-from gui.theme import BG, SURF, FG, FG_M, ACC, ACC_H, SUCC, FONTS
+from gui.theme import (BG, SURF, FG, FG_M, FG_L, ACC, ACC_H, ACC_L, SUCC, SUCC_H,
+                        WARN, DANGER, DANGER_H, BRD, BRD_F, FONTS,
+                        HEADER_BG, PROGRESS_TROUGH, SCROLLBAR_BG)
 from gui.widgets.status_bar import StatusBar
 from gui.widgets.log_panel import LogPanel
 from gui.dialogs.settings_dialog import SettingsDialog
@@ -64,20 +66,146 @@ class XianyuApp:
     def _setup_style(self):
         style = ttk.Style()
         style.theme_use("clam")
+
+        # ━━━ 全局默认 ━━━
         style.configure(".", background=BG, foreground=FG, font=FONTS["ui"])
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", padding=[16, 6], font=FONTS["ui_bold"])
+
+        # ━━━ Frame ━━━
+        style.configure("TFrame", background=BG)
+        style.configure("Card.TFrame", background=SURF, relief="solid", borderwidth=1)
+
+        # ━━━ Label ━━━
+        style.configure("TLabel", background=BG, foreground=FG, font=FONTS["ui"])
+        style.configure("Muted.TLabel", foreground=FG_M)
+        style.configure("Accent.TLabel", foreground=ACC)
+        style.configure("Bold.TLabel", font=FONTS["ui_bold"])
+
+        # ━━━ Notebook 标签页 ━━━
+        # 关键：覆写 layout 去掉焦点指示器（clam 主题选中时焦点层会导致 Tab 大小跳变）
+        style.layout("TNotebook.Tab", [
+            ('Notebook.tab', {
+                'sticky': 'nswe',
+                'children': [
+                    ('Notebook.padding', {
+                        'side': 'top',
+                        'sticky': 'nswe',
+                        'children': [
+                            ('Notebook.label', {'side': 'top', 'sticky': ''})
+                        ]
+                    })
+                ]
+            })
+        ])
+        style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=[3, 3, 3, 0])
+        style.configure("TNotebook.Tab",
+                        font=FONTS["ui"],
+                        padding=[24, 8],
+                        borderwidth=0,
+                        background="#E8EAF0",
+                        foreground=FG_M,
+                        )
         style.map("TNotebook.Tab",
-                  background=[("selected", ACC)],     # 选中Tab橘色背景
-                  foreground=[("selected", "white")])  # 选中Tab白色文字
-        style.configure("Status.TFrame", background=SURF)
-        style.configure("TLabelframe", background=BG)
-        style.configure("TLabelframe.Label", background=BG, font=FONTS["ui_bold"])
-        # 按钮橘色主题
-        style.configure("TButton", font=FONTS["ui"])
+                  background=[("selected", ACC), ("active", "#DCDFE6")],
+                  foreground=[("selected", "white"), ("active", FG)],
+                  padding=[("selected", [24, 8])],
+                  )
+
+        # ━━━ LabelFrame ━━━
+        style.configure("TLabelframe", background=BG, relief="solid", borderwidth=1)
+        style.configure("TLabelframe.Label", background=BG, foreground=FG, font=FONTS["heading"])
+
+        # ━━━ Button：默认白底 ━━━
+        style.configure("TButton", font=FONTS["ui"], padding=[12, 6],
+                        relief="solid", borderwidth=1, background=SURF, foreground=FG)
         style.map("TButton",
-                  background=[("active", ACC), ("!active", SURF)],
-                  foreground=[("active", "white")])
+                  background=[("active", ACC), ("pressed", ACC_H), ("disabled", "#E5E7EB"), ("!active", SURF)],
+                  foreground=[("active", "white"), ("pressed", "white"), ("disabled", FG_L)])
+
+        # ━━━ Button：主题橙色（主要操作）━━━
+        style.configure("Accent.TButton", font=FONTS["ui_bold"], padding=[14, 7],
+                        relief="flat", borderwidth=0, background=ACC, foreground="white")
+        style.map("Accent.TButton",
+                  background=[("active", ACC_H), ("pressed", ACC_H), ("disabled", "#E5E7EB")],
+                  foreground=[("disabled", FG_L)])
+
+        # ━━━ Button：绿色（成功/导出）━━━
+        style.configure("Success.TButton", font=FONTS["ui"], padding=[12, 6],
+                        relief="flat", borderwidth=0, background=SUCC, foreground="white")
+        style.map("Success.TButton",
+                  background=[("active", SUCC_H), ("pressed", SUCC_H)])
+
+        # ━━━ Button：红色边框（危险/停止）━━━
+        style.configure("Danger.TButton", font=FONTS["ui"], padding=[12, 6],
+                        relief="solid", borderwidth=1, background=SURF, foreground=DANGER)
+        style.map("Danger.TButton",
+                  background=[("active", DANGER), ("pressed", DANGER_H)],
+                  foreground=[("active", "white"), ("pressed", "white")])
+
+        # ━━━ Button：紧凑小按钮 ━━━
+        style.configure("Small.TButton", font=FONTS["ui"], padding=[6, 3])
+
+        # ━━━ Entry 输入框 ━━━
+        style.configure("TEntry", fieldbackground=SURF, relief="solid", borderwidth=1, padding=[6, 5])
+        style.map("TEntry", bordercolor=[("focus", ACC)])
+
+        # ━━━ Combobox 下拉框 ━━━
+        style.configure("TCombobox", fieldbackground=SURF, relief="solid", borderwidth=1,
+                        padding=[6, 5], arrowsize=14)
+        style.map("TCombobox",
+                  bordercolor=[("focus", ACC), ("active", ACC)])
+
+        # ━━━ Spinbox 数字选择 ━━━
+        style.configure("TSpinbox", fieldbackground=SURF, relief="solid", borderwidth=1,
+                        padding=[6, 4], arrowsize=12)
+        style.map("TSpinbox", bordercolor=[("focus", ACC)])
+
+        # ━━━ Checkbutton 复选框 ━━━
+        style.configure("TCheckbutton", background=BG, font=FONTS["ui"])
+        style.map("TCheckbutton", indicatorcolor=[("selected", ACC)])
+
+        # ━━━ Radiobutton 单选 ━━━
+        style.configure("TRadiobutton", background=BG, font=FONTS["ui"])
+        style.map("TRadiobutton", indicatorcolor=[("selected", ACC)])
+
+        # ━━━ Treeview 表格 ━━━
+        style.configure("Treeview", background=SURF, foreground=FG, fieldbackground=SURF,
+                        relief="solid", borderwidth=1, rowheight=28)
+        style.configure("Treeview.Heading", background=HEADER_BG, foreground=FG,
+                        font=FONTS["ui_bold"], padding=[8, 6], relief="flat", borderwidth=0)
+        style.map("Treeview.Heading", background=[("active", "#DCDFE6")])
+        style.map("Treeview",
+                  background=[("selected", ACC_L)],
+                  foreground=[("selected", FG)])
+
+        # ━━━ 等级 Tag 颜色（Table 行着色）━━━
+        # 由 tree_helpers.tag_rows_by_grade 在运行时动态设置
+
+        # ━━━ Progressbar 进度条 ━━━
+        style.configure("TProgressbar", background=ACC, troughcolor=PROGRESS_TROUGH,
+                        borderwidth=0, thickness=8)
+
+        # ━━━ Scrollbar 滚动条 — 扁平简洁 ━━━
+        style.configure("TScrollbar",
+                        background=SURF,            # 滑块颜色
+                        troughcolor=BG,             # 轨道颜色（融入背景）
+                        borderwidth=0,
+                        arrowsize=14,
+                        relief="flat",
+                        arrowcolor=FG_M,
+                        width=10,                   # 窄滚动条
+                        )
+        style.map("TScrollbar",
+                  background=[("active", BRD_F), ("pressed", FG_M), ("!active", BRD)],
+                  arrowcolor=[("active", FG)])
+
+        # ━━━ Separator 分割线 ━━━
+        style.configure("TSeparator", background=BRD)
+
+        # ━━━ Scale 滑块 ━━━
+        style.configure("Horizontal.TScale", background=BG, troughcolor=BRD, sliderlength=20)
+
+        # ━━━ 状态栏专用 ━━━
+        style.configure("Status.TFrame", background=SURF)
 
     def _load_version(self) -> dict:
         try:
@@ -119,12 +247,10 @@ class XianyuApp:
         bar.pack(fill=tk.X, side=tk.TOP)
         ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.TOP)
 
-        tk.Button(bar, text="检查更新", command=self._check_for_updates,
-                  bg=SUCC, fg="white", font=FONTS["ui"], relief=tk.FLAT,
-                  cursor="hand2", padx=14, pady=4).pack(side=tk.LEFT, padx=2)
-        tk.Button(bar, text="关于", command=self._show_about,
-                  bg=ACC, fg="white", font=FONTS["ui"], relief=tk.FLAT,
-                  cursor="hand2", padx=14, pady=4).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="检查更新", command=self._check_for_updates,
+                   style="Success.TButton").pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="关于", command=self._show_about,
+                   style="Accent.TButton").pack(side=tk.LEFT, padx=2)
 
     def _build_main_area(self):
         """左右分栏：左侧Notebook(5个Tab) | 右侧日志面板"""
@@ -277,12 +403,10 @@ class XianyuApp:
 
         btn_frame = tk.Frame(win, bg=SURF)
         btn_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
-        tk.Button(btn_frame, text="检查更新", command=self._check_for_updates,
-                  bg=SUCC, fg="white", font=FONTS["ui_bold"],
-                  relief=tk.FLAT, cursor="hand2", padx=16, pady=6).pack(side=tk.LEFT)
-        tk.Button(btn_frame, text="关闭", command=win.destroy,
-                  bg=ACC, fg="white", font=FONTS["ui_bold"],
-                  relief=tk.FLAT, cursor="hand2", padx=24, pady=6).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text="检查更新", command=self._check_for_updates,
+                   style="Success.TButton").pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="关闭", command=win.destroy,
+                   style="Accent.TButton").pack(side=tk.RIGHT)
 
     def _check_for_updates(self):
         """检查更新：从 GitHub Release 自动获取最新版本"""

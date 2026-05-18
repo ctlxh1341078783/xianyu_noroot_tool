@@ -2,13 +2,18 @@
 from typing import List, Tuple
 import tkinter as tk
 from tkinter import ttk
-from gui.theme import GRADE_COLORS, FONTS
+from gui.theme import GRADE_COLORS, FONTS, SURF, FG, FG_M, ACC, ACC_L, BRD, HEADER_BG
 
 
 def setup_tree_style():
+    """配置 Treeview 表格样式（由 app._setup_style 统一管理，此函数保留兼容）"""
     style = ttk.Style()
-    style.configure("Treeview", font=FONTS["ui"], rowheight=24)
-    style.configure("Treeview.Heading", font=FONTS["ui_bold"])
+    style.configure("Treeview", background=SURF, foreground=FG, fieldbackground=SURF,
+                    relief="solid", borderwidth=1, rowheight=28, font=FONTS["ui"])
+    style.configure("Treeview.Heading", background=HEADER_BG, foreground=FG, font=FONTS["ui_bold"],
+                    padding=[8, 5], relief="flat", borderwidth=0)
+    style.map("Treeview.Heading", background=[("active", "#E5E7EB")])
+    style.map("Treeview", background=[("selected", ACC_L)], foreground=[("selected", FG)])
     return style
 
 

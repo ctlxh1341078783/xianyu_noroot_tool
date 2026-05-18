@@ -1,6 +1,7 @@
 """全局主题配置：橘黄色主题 颜色/字体/样式"""
 import sys
 from pathlib import Path
+from tkinter import ttk
 
 # ── 配色方案（橘黄色主题） ──
 BG = "#F5F6FA"           # 全局背景（柔白）
@@ -11,11 +12,20 @@ FG_M = "#8A90A8"          # 次要文字
 FG_L = "#B0B5C5"          # 浅文字
 ACC = "#FF6B35"           # 主题橘 主色
 ACC_H = "#E85A2C"         # 主题橘 深色
+ACC_L = "#FFF0E8"         # 主题橘 浅底（选中行背景）
 SUCC = "#27AE60"          # 成功绿
+SUCC_H = "#1EA35A"        # 成功绿 深色
 WARN = "#F59E0B"          # 警告黄
 DANGER = "#E74C3C"        # 危险红
+DANGER_H = "#C0392B"      # 危险红 深色
 BRD = "#E2E5F0"           # 边框浅灰
 BRD_F = "#D1D5DB"         # 边框深灰
+
+# ── 组件专用色 ──
+HEADER_BG = "#F3F4F6"     # 表头背景（Treeview Heading）
+PROGRESS_TROUGH = "#E5E7EB"  # 进度条槽色
+SCROLLBAR_BG = "#F0F1F5"  # 滚动条背景
+FOCUS_COLOR = "#FF6B35"   # 输入框焦点色
 
 # ── 等级颜色 ──
 GRADE_COLORS = {
