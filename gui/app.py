@@ -301,16 +301,39 @@ class XianyuApp:
     def _check_updates_github(self, repo: str):
         """后台从 GitHub API 查询最新 Release"""
         api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+
+        # 构建代理 opener（自动检测系统代理，解决 Clash 等代理软件下 Python 不走代理的问题）
+        proxy_opener = None
+        proxies = urllib.request.getproxies()
+        if proxies:
+            proxy_opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler(proxies))
+        else:
+            # 备选：手动检查常见代理端口
+            for port in [7890, 10809, 1080, 8080]:
+                try:
+                    handler = urllib.request.ProxyHandler({
+                        "https": f"http://127.0.0.1:{port}",
+                        "http": f"http://127.0.0.1:{port}",
+                    })
+                    proxy_opener = urllib.request.build_opener(handler)
+                    break
+                except Exception:
+                    continue
+
         try:
             req = urllib.request.Request(api_url)
             req.add_header("Accept", "application/vnd.github+json")
             req.add_header("User-Agent", "XianyuTool-Update")
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            opener = proxy_opener or urllib.request.build_opener()
+            with opener.open(req, timeout=15) as resp:
                 release = json.loads(resp.read().decode("utf-8"))
         except Exception as e:
             self.root.after(0, lambda: [
                 messagebox.showwarning("检查失败",
-                    f"无法连接到 GitHub，请检查网络。\n\n错误: {e}\n\n将切换到手动选择模式。"),
+                    f"无法连接到 GitHub，请检查网络。\n\n"
+                    f"如果用 Clash/机场，请确认 Clash 开启了系统代理。\n\n"
+                    f"错误: {e}\n\n将切换到手动选择模式。"),
                 self._check_updates_manual()
             ])
             return
