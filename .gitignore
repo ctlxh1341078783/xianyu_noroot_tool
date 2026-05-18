@@ -1,6 +1,7 @@
 # 构建产物
 build/
 dist/
+../XianyuTool_release/
 *.spec.bak
 __pycache__/
 *.pyc
