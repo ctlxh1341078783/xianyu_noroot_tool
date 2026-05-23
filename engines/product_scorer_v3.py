@@ -135,6 +135,12 @@ class ProductScorerV3:
         self._cfg = config
         self._load_params(config)
 
+    def set_category_profile(self, profile: dict):
+        """应用品类差异化配置"""
+        pd_cfg = profile.get("product_scorer", {})
+        user_grades = pd_cfg.get("grade_thresholds", {})
+        self._grades.update(user_grades)
+
     # ════════════════════════════════════════════════
     # 第1层：搜索列表预筛选（不进详情）
     # ════════════════════════════════════════════════
@@ -217,6 +223,12 @@ class ProductScorerV3:
         """
         计算搜索层优先级分（0-100），决定进入详情的顺序。
         不是最终评分，只用于排序。
+
+        维度权重:
+          已售标签 0-40  — 最强信号，已售越多越值得进详情
+          价格合理 0-15  — 低于均价才有利润空间
+          想要数   0-10  — 需求热度辅助信号
+          服务标签 0-8   — 弱信号，仅作微调
         """
         score = 0
 
@@ -228,28 +240,26 @@ class ProductScorerV3:
         elif sold_cnt >= 10:   score += 20
         elif sold_cnt > 0:     score += 10
 
-        # 服务标签（正向信号，可能为字符串或dict）
-        tags = item.get("serviceTags", []) or []
-        for t in tags:
-            c = t if isinstance(t, str) else (t.get("content", "") or "")
-            if "百分百好评" in c:   score += 15
-            elif "包邮" in c:       score += 10
-            elif "24小时发货" in c: score += 8
-            elif "已售" in c:       score += 5
-
-        # 价格合理性
+        # 价格合理性（低于均价=有加价空间）
         price = self._parse_price(item.get("price", "0"))
-        avg_price = self._to_float(avg_price)
-        price = self._to_float(price)
         if avg_price > 0 and price > 0:
             pct = (price - avg_price) / avg_price
-            if -0.2 <= pct < 0.1:    score += 15  # 价格合理区间
+            if -0.2 <= pct < 0.1:    score += 15
             elif -0.35 <= pct < -0.2: score += 8
 
         # 想要数
         want = self._to_int(item.get("wantNum", 0))
-        if want >= 10:    score += 10
-        elif want >= 1:   score += 5
+        if want >= 100:   score += 10
+        elif want >= 10:  score += 7
+        elif want >= 1:   score += 3
+
+        # 服务标签（弱信号，仅微调）
+        tags = item.get("serviceTags", []) or []
+        for t in tags:
+            c = t if isinstance(t, str) else (t.get("content", "") or "")
+            if "百分百好评" in c:   score += 5
+            elif "包邮" in c:       score += 3
+            elif "已售" in c:       score += 2
 
         return score
 

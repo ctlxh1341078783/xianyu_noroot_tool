@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from engines.device_engine import DeviceEngine
+from engines.flywheel_engine import FlywheelEngine
+from engines.scoring_evolution import ScoringEvolution
 from core.frida_bridge import FridaBridge
 from engines.keyword_scorer_v3 import KeywordScorerV3
 from utils.log_manager import get_logger
@@ -96,6 +98,132 @@ def _market_cache_put(cache_dir: Path, kw: str, payload: dict):
         pass
 
 
+# ════════════════════════════════════════════════════════════════
+# 闲鱼风控守护（两阶段：重启 → 30分钟冷却）
+# ════════════════════════════════════════════════════════════════
+
+class XianyuRiskGuard:
+    """闲鱼风控检测与自动恢复
+
+    检测信号：
+      - 连续 N 次 API 返回 error
+      - 连续 N 个关键词搜索结果为 0
+
+    两阶段响应：
+      阶段1: 达到阈值 → kill App + 重启 + 短暂冷却 → 继续采集
+      阶段2: 阶段1后再次触发 → kill App + 等30分钟 → 重启 → 继续采集
+    """
+
+    STAGE1_ERROR_THRESHOLD = 3       # 连续3次错误触发阶段1
+    STAGE2_ERROR_THRESHOLD = 2       # 重启后连续2次错误触发阶段2
+    STAGE1_COOLDOWN_SEC = 30         # 阶段1冷却时间（秒）
+    STAGE2_COOLDOWN_SEC = 30 * 60    # 阶段2冷却时间（30分钟）
+    SUCCESS_RESET_COUNT = 3          # 连续3次成功后重置所有状态
+
+    def __init__(self, device_mgr, logger, webhook_url: str = ""):
+        self._mgr = device_mgr
+        self._log = logger
+        self._webhook_url = webhook_url
+
+        self._consecutive_errors = 0
+        self._consecutive_successes = 0
+        self._stage1_triggered = False
+        self._last_error_type = ""
+
+    def report_error(self, stage: str, keyword: str, detail: str = "") -> bool:
+        """报告一次错误，返回 True 表示需要暂停当前关键词"""
+        self._consecutive_errors += 1
+        self._consecutive_successes = 0
+        self._last_error_type = f"[{stage}] {keyword}: {detail}"
+
+        if not self._stage1_triggered and self._consecutive_errors >= self.STAGE1_ERROR_THRESHOLD:
+            return self._handle_stage1()
+        elif self._stage1_triggered and self._consecutive_errors >= self.STAGE2_ERROR_THRESHOLD:
+            return self._handle_stage2()
+        return False
+
+    def report_success(self):
+        """报告一次成功"""
+        self._consecutive_errors = 0
+        self._consecutive_successes += 1
+        if self._consecutive_successes >= self.SUCCESS_RESET_COUNT and self._stage1_triggered:
+            self._log.info("[风控] 恢复正常，重置风控状态")
+            self._stage1_triggered = False
+            self._consecutive_successes = 0
+
+    def _handle_stage1(self) -> bool:
+        """阶段1：立即杀进程+重启，短暂冷却后恢复"""
+        self._log.warning(
+            f"[风控] 阶段1触发: 连续{self._consecutive_errors}次错误 "
+            f"({self._last_error_type}) → 重启闲鱼App"
+        )
+        try:
+            if self._mgr:
+                self._mgr.restart_app()
+                self._log.info("[风控] 阶段1: 闲鱼已重启，等待冷却...")
+                time.sleep(self.STAGE1_COOLDOWN_SEC)
+                self._log.info("[风控] 阶段1: 冷却完成，恢复采集")
+        except Exception as e:
+            self._log.error(f"[风控] 阶段1 重启失败: {e}")
+
+        self._stage1_triggered = True
+        self._consecutive_errors = 0
+        return True  # 让调用者重新尝试
+
+    def _handle_stage2(self) -> bool:
+        """阶段2：杀进程+等待30分钟+重启"""
+        cooldown_min = self.STAGE2_COOLDOWN_SEC // 60
+        self._log.warning(
+            f"[风控] 阶段2触发: 重启后仍连续{self._consecutive_errors}次错误 "
+            f"({self._last_error_type}) → 进入{cooldown_min}分钟冷却"
+        )
+
+        if self._webhook_url:
+            self._send_webhook_alert(cooldown_min)
+
+        try:
+            if self._mgr:
+                self._mgr.restart_app()
+                self._log.info(f"[风控] 阶段2: 已重启，等待 {cooldown_min} 分钟冷却...")
+                # 分段等待，每10秒打印进度
+                for i in range(cooldown_min):
+                    if i % 5 == 0 and i > 0:
+                        self._log.info(f"[风控] 冷却中... {i}/{cooldown_min} 分钟")
+                    time.sleep(60)
+                self._log.info("[风控] 阶段2: 冷却完成，恢复采集")
+        except Exception as e:
+            self._log.error(f"[风控] 阶段2 重启失败: {e}")
+
+        self._stage1_triggered = False
+        self._consecutive_errors = 0
+        return True
+
+    def _send_webhook_alert(self, cooldown_min: int):
+        try:
+            import requests
+            msg = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "content": (
+                        f"## 🚨 闲鱼采集风控告警\n"
+                        f"> 触发时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"> 最后错误: {self._last_error_type}\n"
+                        f"> 处理: 已自动重启App，进入{cooldown_min}分钟冷却\n"
+                        f"> 状态: 冷却完成后自动恢复采集"
+                    )
+                }
+            }
+            requests.post(self._webhook_url, json=msg, timeout=10)
+            self._log.info("[风控] 已发送企微告警")
+        except Exception as e:
+            self._log.warn(f"[风控] 企微告警发送失败: {e}")
+
+    def reset(self):
+        self._consecutive_errors = 0
+        self._consecutive_successes = 0
+        self._stage1_triggered = False
+
+
 class CollectionEngine:
     def __init__(self, device_engine: DeviceEngine, settings: dict):
         self._dev = device_engine
@@ -130,8 +258,28 @@ class CollectionEngine:
         self._rate_market = c.get("rate_market", [3, 5])
         self._rate_keyword = c.get("rate_keyword", [8, 15])
         # 推送阈值：关键词评分达此分才进选品阶段，商品评分达此分才推货源
-        self._kw_push_threshold = c.get("kw_push_threshold", 75)
-        self._pd_push_threshold = c.get("pd_push_threshold", 75)
+        self._kw_push_threshold = c.get("kw_push_threshold", 10)
+        self._pd_push_threshold = c.get("pd_push_threshold", 10)
+        # 飞轮引擎（Phase B AI 候选词提取 + 词库膨胀）
+        self._flywheel_engine: Optional[FlywheelEngine] = None
+        # 评分进化（品类级别权重学习，延迟初始化）
+        self._scoring_evo = None
+        # 飞轮闭环：已处理过的词（全局去重）
+        self._processed_keywords: set = set()
+        self._flywheel_max_rounds = c.get("flywheel_max_rounds", 3)
+        self._flywheel_round_size = c.get("flywheel_round_size", 50)
+        # 跨轮累积结果
+        self._all_kw_acc = []
+        self._all_pd_acc = []
+        self._all_supply_acc = []
+
+        # 风控守护
+        webhook_url = settings.get("wechat", {}).get("webhook_url", "")
+        self._risk_guard = XianyuRiskGuard(
+            device_engine.manager if device_engine else None,
+            self._logger,
+            webhook_url,
+        )
 
     @property
     def running(self) -> bool:
@@ -163,8 +311,8 @@ class CollectionEngine:
         self._rate_comment = c.get("rate_comment", [3, 6])
         self._rate_market = c.get("rate_market", [3, 5])
         self._rate_keyword = c.get("rate_keyword", [8, 15])
-        self._kw_push_threshold = c.get("kw_push_threshold", 75)
-        self._pd_push_threshold = c.get("pd_push_threshold", 75)
+        self._kw_push_threshold = c.get("kw_push_threshold", 10)
+        self._pd_push_threshold = c.get("pd_push_threshold", 10)
         self._logger.info(f"[采集] 参数已刷新: hs_pages={self._hs_pages}, detail={self._detail_max}, comment={self._comment_max}, kw_push={self._kw_push_threshold}, pd_push={self._pd_push_threshold}")
 
     def set_callbacks(self, on_stage=None, on_keyword=None, on_product=None, on_complete=None):
@@ -193,7 +341,45 @@ class CollectionEngine:
 
     def stop(self):
         self._running = False
+        if hasattr(self, '_parallel_pipeline') and self._parallel_pipeline:
+            self._parallel_pipeline.stop()
+        if hasattr(self, '_risk_guard') and self._risk_guard:
+            self._risk_guard.reset()
         self._logger.info("采集已停止")
+
+    def start_parallel(self, keywords: List[str], output_dir: Path):
+        """并行模式入口：4线程+3队列流水线，飞轮前置持续运转"""
+        if self._running:
+            self._logger.warn("采集已在运行中")
+            return
+
+        if self._dev:
+            self._logger.info("[并行] 前置检查：确保手机服务就绪...")
+            if not self._dev.ensure_services_ready():
+                self._logger.error("[并行] 手机服务未就绪，采集中止")
+                return
+
+        from engines.parallel_pipeline import ParallelPipeline
+
+        self._parallel_pipeline = ParallelPipeline(
+            self._settings, self._dev, self._kw_scorer,
+            self._pd_scorer, self._supply_engine,
+        )
+
+        self._parallel_pipeline.set_callbacks(
+            on_stage=self._on_stage,
+            on_keyword=self._on_keyword,
+            on_product=self._on_product,
+            on_complete=self._on_parallel_done,
+        )
+
+        self._running = True
+        self._parallel_pipeline.start(keywords, output_dir)
+
+    def _on_parallel_done(self, kw_results, pd_results, supply_results):
+        if self._on_complete:
+            self._on_complete(kw_results, pd_results, supply_results)
+        self._running = False
 
     def _init_bridge(self) -> bool:
         if self._bridge and self._bridge.loaded:
@@ -249,10 +435,30 @@ class CollectionEngine:
         elif stage == "comment":
             self._notify_stage("_info", f"{kw} 评论: {done}/{total}", done=0, total=0)
 
-    def _run(self, keywords: List[str], output_dir: Path):
+    def _run(self, keywords: List[str], output_dir: Path, _round: int = 1):
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         state_path = output_dir / "_pipeline_state.json"
+
+        # 首轮初始化评分进化
+        if self._scoring_evo is None:
+            evo_path = output_dir / "scoring_evolution.json"
+            self._scoring_evo = ScoringEvolution(None, storage_path=evo_path)
+
+        # 首轮初始化已处理词集
+        if _round == 1:
+            self._processed_keywords = set(keywords)
+
+        if _round > 1:
+            self._logger.info(f"\n{'='*60}")
+            self._logger.info(f"[飞轮闭环] 第{_round}轮: {len(keywords)}个新词")
+            self._logger.info(f"{'='*60}")
+            self._notify_stage("market", f"飞轮第{_round}轮: 行情采集", done=0, total=len(keywords))
+        else:
+            # 首轮清空累积
+            self._all_kw_acc = []
+            self._all_pd_acc = []
+            self._all_supply_acc = []
 
         # ─── 断点恢复 ───
         state = _load_state(state_path)
@@ -366,6 +572,7 @@ class CollectionEngine:
                     self._logger.error(f"[行情] {kw} 采集异常: {e}")
                     market_results[kw] = {"error": str(e)}
                     self._notify_stage("market", f"行情: {idx+1}/{total_kw}", done=idx + 1, total=total_kw)
+                    self._risk_guard.report_error("行情", kw, str(e)[:50])
                 _checkpoint("market")
 
             _checkpoint("keyword_scoring")
@@ -376,13 +583,14 @@ class CollectionEngine:
             if not self._running:
                 return self._finish(all_kw_results, all_pd_results, all_supply_pushed, output_dir)
 
-            self._notify_stage("keyword_scoring", "阶段2: 预检+海选评分", done=0, total=total_kw)
+            self._notify_stage("keyword_scoring", "阶段2: 海选评分", done=0, total=total_kw)
             self._logger.info("[采集] 阶段2: 预检+海选评分")
 
             # 恢复时跳过已评分的词
             scored_kws = {r.get("keyword") for r in all_kw_results}
             precheck_passed = sum(1 for r in all_kw_results if r.get("grade") not in ("N/A", "?", None))
             scored_count = len(all_kw_results)
+            market_count = sum(1 for md in market_results.values() if isinstance(md, dict) and md.get("hasMarket"))
 
             for idx, kw in enumerate(keywords):
                 if kw in scored_kws:
@@ -412,11 +620,13 @@ class CollectionEngine:
                         self._logger.info(f"[预检淘汰] {kw}: {reason}")
                         self._notify_kw(kw, idx + 1, total_kw, f"淘汰: {reason[:20]}")
                         scored_count += 1
-                        self._notify_stage("keyword_scoring", f"预检+海选: {scored_count}/{total_kw} (通过{precheck_passed})",
-                                          done=scored_count, total=total_kw)
+                        self._notify_stage("market", f"预检: {precheck_passed}/{total_kw}通过",
+                                          done=precheck_passed, total=total_kw)
                         _checkpoint("keyword_scoring")
                         continue
                     precheck_passed += 1
+                    self._notify_stage("market", f"预检: {precheck_passed}/{total_kw}通过",
+                                      done=precheck_passed, total=total_kw)
 
                 # 海选评分（score_fast 粗筛），A+词再走 score_full 精选
                 if self._kw_scorer:
@@ -427,19 +637,28 @@ class CollectionEngine:
                     grade = score.get("grade", "?")
                     total_score = score.get("total_100", 0)
                     scored_count += 1
-                    self._notify_stage("keyword_scoring", f"预检+海选: {scored_count}/{total_kw} (A+{len(a_plus_keywords)})",
-                                      done=scored_count, total=total_kw)
+                    self._notify_stage("keyword_scoring", f"评分: {len(a_plus_keywords)}A+/{precheck_passed}通过",
+                                      done=len(a_plus_keywords), total=precheck_passed)
                     self._logger.info(f"[评分] {kw}: {total_score}分 {grade}级（海选）")
 
                     if total_score >= self._kw_push_threshold:
-                        # 精选评分
+                        # 精选评分：品类进化权重 + 成交记录深度分析
+                        evo_weights = None
+                        evo_thresholds = None
+                        if self._scoring_evo:
+                            evo_weights = self._scoring_evo.get_weights_for(kw)
+                            evo_thresholds = self._scoring_evo.get_thresholds_for(kw)
                         full_score = self._kw_scorer.score_full(kw, md, {
                             "numFound": md.get("numFound", 0),
                             "sellingOrder": "",
-                        })
+                        }, category_weights=evo_weights, category_thresholds=evo_thresholds)
                         a_plus_keywords.append((kw, full_score))
                         kw_score_map[kw] = full_score
-                        self._logger.info(f"  >>> 达标关键词: {kw} ({total_score}分海选→{full_score.get('total_100', total_score)}分精选≥{self._kw_push_threshold})")
+                        evo_note = ""
+                        if full_score.get("_evo_applied"):
+                            delta = full_score.get("_evo_score_delta", 0)
+                            evo_note = f" [进化权重{'↑' if delta > 0 else '↓'}{abs(delta):.1f}分]"
+                        self._logger.info(f"  >>> 达标关键词: {kw} ({total_score}分海选→{full_score.get('total_100', total_score)}分精选≥{self._kw_push_threshold}){evo_note}")
                         self._notify_kw(kw, idx + 1, total_kw, f"{full_score.get('total_100', total_score)}分 {full_score.get('grade', grade)}级",
                                         has_market=bool(md.get("topbar")))
                         self._notify_stage("keyword_full", f"精选: {len(a_plus_keywords)}个A+", done=len(a_plus_keywords), total=max(scored_count, 1))
@@ -454,9 +673,75 @@ class CollectionEngine:
                 _checkpoint("keyword_scoring")
 
             if not a_plus_keywords:
-                self._logger.warn("[采集] 无A级以上关键词，跳过选品阶段")
+                # 无A+词 → 取TOP-N跑搜索+Phase B，挖新词给下轮
+                rescue_top_n = 10
+                rescue_words = sorted(
+                    [r for r in all_kw_results if r.get("total_100", 0) > 0],
+                    key=lambda r: r.get("total_100", 0), reverse=True
+                )[:rescue_top_n]
+                if rescue_words:
+                    self._logger.info(
+                        f"[采集] 无A+词，取TOP{len(rescue_words)}词跑搜索+飞轮挖新词: "
+                        f"{', '.join(r['keyword'] for r in rescue_words)}")
+                    self._notify_stage("keyword_scoring",
+                        f"无A+词，飞轮挖词中...", done=0, total=len(rescue_words))
+
+                    if not self._bridge or not self._bridge.loaded:
+                        self._init_bridge()
+                        self._bridge.set_progress_callback(self._on_js_progress)
+
+                    rescue_titles = {}
+                    for idx, r in enumerate(rescue_words):
+                        if not self._running:
+                            break
+                        kw = r["keyword"]
+                        self._notify_kw(kw, idx + 1, len(rescue_words), "搜索中")
+                        try:
+                            raw = self._bridge.collect_keyword(kw, max_pages=5, detail_max=0, comment_max=0)
+                            if not raw.get("error"):
+                                items = raw.get("searchItems", [])
+                                rescue_titles[kw] = [it.get("title", "") for it in items if it.get("title")]
+                                self._logger.info(f"[飞轮挖词] {kw}: {len(items)}条搜索")
+                        except Exception as e:
+                            self._logger.error(f"[飞轮挖词] {kw}: {e}")
+
+                    # 跑 Phase B 从标题中提取新词
+                    if rescue_titles:
+                        self._logger.info("[飞轮挖词] 运行 Phase B...")
+                        if self._flywheel_engine is None:
+                            self._flywheel_engine = FlywheelEngine(self._settings, output_dir=output_dir)
+
+                        kw_data = [
+                            {"keyword": kw, "search_items": [{"title": t} for t in titles], "numFound": len(titles)}
+                            for kw, titles in rescue_titles.items()
+                        ]
+                        try:
+                            fb_result = self._flywheel_engine.run_phase_b_batch(kw_data)
+                            n_pass = fb_result["summary"]["pass_words"]
+                            self._logger.info(
+                                f"[飞轮挖词] Phase B 完成: {n_pass}个新pass词 → 进入下轮")
+                            self._notify_stage("flywheel",
+                                f"飞轮挖词: {n_pass}个新词", done=1, total=1)
+                        except Exception as e:
+                            self._logger.error(f"[飞轮挖词] Phase B 异常: {e}")
+
+                # 保存本轮结果，积累样本
                 self._save_all_results(all_kw_results, all_pd_results, output_dir)
-                _checkpoint("done")
+
+                # 直接检查飞轮是否产出了新pass词，有就启动下轮
+                if _round < self._flywheel_max_rounds and self._flywheel_engine:
+                    new_pass = self._flywheel_engine.word_lib.get_pass_words()
+                    new_round_words = [w for w in new_pass
+                                      if w not in self._processed_keywords]
+                    if new_round_words:
+                        new_round_words = new_round_words[:self._flywheel_round_size]
+                        self._processed_keywords.update(new_round_words)
+                        self._logger.info(
+                            f"[飞轮挖词] 第{_round}轮救急 → 发现{len(new_round_words)}个新词，启动第{_round+1}轮")
+                        return self._run(new_round_words, output_dir, _round=_round + 1)
+                    else:
+                        self._logger.info("[飞轮挖词] 无新pass词，飞轮停止")
+
                 return self._finish(all_kw_results, all_pd_results, all_supply_pushed, output_dir)
 
             self._logger.info(f"[采集] A+关键词: {[(kw, s['total_100']) for kw, s in a_plus_keywords]}")
@@ -477,20 +762,20 @@ class CollectionEngine:
                 self._init_bridge()
             self._bridge.set_progress_callback(self._on_js_progress)
 
-            total_items_searched = 0
-            total_items_kept = 0
             total_details_done = 0
 
             for idx, kw in enumerate(a_plus_kw_list):
                 if kw in product_results and product_results[kw].get("search_items"):
-                    # 恢复时累计已有数据
                     existing = product_results[kw]
-                    total_items_searched += len(existing.get("search_items", []))
-                    total_items_kept += len(existing.get("keep_list", []))
                     total_details_done += len(existing.get("details", {}))
                     continue
                 if not self._running:
                     break
+
+                # 每个新关键词重置产品漏斗（品·预筛选 + 品·详情）
+                self._notify_stage("product_search", f"{kw} 搜索中...", done=0, total=0)
+                self._notify_stage("product_detail", f"{kw} 详情: 0/0", done=0, total=0)
+
                 self._notify_kw(kw, idx + 1, n_aplus, "搜索中")
                 try:
                     kw_score = kw_score_map.get(kw, {})
@@ -509,6 +794,7 @@ class CollectionEngine:
                         product_results[kw] = kw_data
                         self._notify_kw(kw, idx + 1, n_aplus, f"失败: {raw.get('error', '')[:20]}")
                         self._notify_stage("product_search", f"搜索: {idx+1}/{n_aplus}", done=idx + 1, total=n_aplus)
+                        self._risk_guard.report_error("搜索", kw, str(raw.get("error", ""))[:50])
                         _checkpoint("product_search")
                         continue
 
@@ -516,31 +802,31 @@ class CollectionEngine:
                     search_meta = raw.get("searchMeta", {})
                     kw_data["search_items"] = items
                     kw_data["numFound"] = search_meta.get("numFound", 0)
-                    total_items_searched += len(items)
 
                     self._logger.info(f"[搜索] {kw}: {len(items)} 条搜索结果")
 
                     if not items:
                         self._logger.warn(f"[搜索] {kw}: 无搜索结果")
                         product_results[kw] = kw_data
-                        self._notify_stage("product_search", f"搜索: {idx+1}/{n_aplus}", done=idx + 1, total=n_aplus)
+                        self._notify_stage("product_search", f"{kw}: 0结果", done=0, total=0)
+                        self._risk_guard.report_error("搜索", kw, "0结果")
                         _checkpoint("product_search")
                         continue
+
+                    self._risk_guard.report_success()
 
                     # 预筛选（Python 侧，决定哪些商品值得进详情）
                     if self._pd_scorer:
                         keep_list, discard_list = self._pd_scorer.prefilter(items, avg_price)
                         kw_data["keep_list"] = keep_list
                         kw_data["discard_list"] = discard_list
-                        total_items_kept += len(keep_list)
                         self._logger.info(f"[预筛选] {kw}: 保留{len(keep_list)}/淘汰{len(discard_list)}")
                     else:
                         keep_list = items
-                        total_items_kept += len(keep_list)
 
-                    # 更新漏斗：搜索+预筛
-                    self._notify_stage("product_search", f"搜索+预筛: {total_items_kept}/{total_items_searched}",
-                                      done=total_items_kept, total=total_items_searched)
+                    # 每词漏斗：预筛通过数 / 搜索总数
+                    self._notify_stage("product_search", f"{kw}: 预筛{len(keep_list)}/{len(items)}",
+                                      done=len(keep_list), total=len(items))
 
                     # keep_list 已按优先级排序，取前 detail_max 条进详情
                     detail_keep = keep_list[:self._detail_max] if self._detail_max > 0 else keep_list
@@ -548,7 +834,7 @@ class CollectionEngine:
 
                     # Step B: 精准详情采集
                     if detail_ids:
-                        self._notify_stage("product_detail", f"详情: 0/{len(detail_ids)}",
+                        self._notify_stage("product_detail", f"{kw} 详情: 0/{len(detail_ids)}",
                                           done=0, total=len(detail_ids))
                         try:
                             details_raw = self._bridge.collect_details(detail_ids)
@@ -556,8 +842,12 @@ class CollectionEngine:
                         except Exception as e:
                             self._logger.error(f"[详情] {kw} 批量采集异常: {e}")
                             kw_data["details"] = {}
+                            self._risk_guard.report_error("详情", kw, str(e)[:50])
                         total_details_done += len(kw_data["details"])
-                        self._logger.info(f"[详情] {kw}: {len(kw_data['details'])}/{len(detail_ids)} 采集成功")
+                        n_detail = len(kw_data["details"])
+                        self._notify_stage("product_detail", f"{kw} 详情: {n_detail}/{len(detail_ids)}",
+                                          done=n_detail, total=len(detail_ids))
+                        self._logger.info(f"[详情] {kw}: {n_detail}/{len(detail_ids)} 采集成功")
 
                     # Step C: 精准评论采集（取已采详情的前 comment_max 条）
                     if self._comment_max > 0 and kw_data["details"]:
@@ -568,6 +858,7 @@ class CollectionEngine:
                         except Exception as e:
                             self._logger.error(f"[评论] {kw} 批量采集异常: {e}")
                             kw_data["comments"] = {}
+                            self._risk_guard.report_error("评论", kw, str(e)[:50])
                         self._logger.info(f"[评论] {kw}: {len(kw_data['comments'])}/{len(comment_ids)} 采集成功")
 
                     product_results[kw] = kw_data
@@ -575,22 +866,23 @@ class CollectionEngine:
                                     search_cnt=len(items), has_market=True,
                                     detail_cnt=len(kw_data["details"]),
                                     comment_cnt=len(kw_data.get("comments", {})))
-                    self._notify_stage("product_detail", f"详情: {total_details_done}/{total_items_kept}",
-                                      done=total_details_done, total=total_items_kept)
-
                 except Exception as e:
                     self._logger.error(f"[闭环] {kw} 异常: {e}")
                     product_results[kw] = {"keyword": kw, "error": str(e)}
-                    self._notify_stage("product_search", f"闭环: {idx+1}/{n_aplus}", done=idx + 1, total=n_aplus)
+                    self._notify_stage("product_search", f"闭环: {idx+1}/{n_aplus}",
+                                      done=idx + 1, total=n_aplus)
                 _checkpoint("product_search")
 
-            # 阶段3完成后，确保漏斗显示最终值
-            if total_items_searched > 0:
-                self._notify_stage("product_search", f"搜索+预筛: {total_items_kept}/{total_items_searched}",
-                                  done=total_items_kept, total=total_items_searched)
-            if total_items_kept > 0:
-                self._notify_stage("product_detail", f"详情: {total_details_done}/{total_items_kept}",
-                                  done=total_details_done, total=total_items_kept)
+            # 阶段3完成后，汇总：品·预筛选 = 所有词累计
+            all_kept = sum(len(v.get("keep_list", [])) for v in product_results.values())
+            all_searched = sum(len(v.get("search_items", [])) for v in product_results.values())
+            all_details = sum(len(v.get("details", {})) for v in product_results.values())
+            if all_searched > 0:
+                self._notify_stage("product_search", f"完成: {all_kept}/{all_searched}保留",
+                                  done=all_kept, total=all_searched)
+            if all_kept > 0:
+                self._notify_stage("product_detail", f"完成: {all_details}/{all_kept}已采",
+                                  done=all_details, total=all_kept)
 
             # 清除进度回调
             self._bridge.set_progress_callback(None)
@@ -746,25 +1038,149 @@ class CollectionEngine:
                         except Exception as e:
                             self._logger.error(f"[商品评分] {kw}/{item.get('itemId', '?')} 异常: {e}")
 
-            # 阶段4结束后，统一推送所有S/A商品到货源引擎
-            if sa_items_to_push and self._supply_engine:
-                self._logger.info(f"[货源推送] 共 {len(sa_items_to_push)} 件S/A商品推送到货源查找")
+            # ═══════════ 阶段5a: 飞轮 Phase B（AI分析，不占手机，可与PDD并发）═══════════
+            if last_stage in ("product_scoring",):
+                self._notify_stage("flywheel", "阶段5a: AI飞轮分析", done=0, total=1)
+                self._logger.info("[采集] 阶段5a: 飞轮 Phase B (AI分析)")
+
                 try:
-                    self._supply_engine.start(sa_items_to_push)
+                    keyword_data_for_flywheel = []
+                    for kw, kw_score in a_plus_keywords:
+                        kw_data = product_results.get(kw, {})
+                        items = kw_data.get("search_items", [])
+                        if items:
+                            keyword_data_for_flywheel.append({
+                                "keyword": kw,
+                                "search_items": items,
+                                "numFound": kw_data.get("numFound", 0),
+                            })
+
+                    if keyword_data_for_flywheel and self._flywheel_engine is None:
+                        self._flywheel_engine = FlywheelEngine(
+                            self._settings, output_dir=output_dir)
+
+                    if keyword_data_for_flywheel and self._flywheel_engine:
+                        fb_result = self._flywheel_engine.run_phase_b_batch(
+                            keyword_data_for_flywheel)
+                        n_pass = fb_result["summary"]["pass_words"]
+                        n_watch = fb_result["summary"]["watch_words"]
+                        n_pending = fb_result["summary"]["pending_words"]
+                        n_materials = fb_result["summary"]["new_materials"]
+                        self._logger.info(
+                            f"[飞轮 Phase B] 完成: 通过{n_pass}词 观察{n_watch}词 "
+                            f"待验证{n_pending}词 素材{n_materials}条")
+                        self._notify_stage("flywheel",
+                            f"Phase B: {n_pass}通过 {n_watch}观察 {n_pending}待验证",
+                            done=1, total=1)
+                        # pass词已由飞轮引擎写入词库，本轮结束后由闭环自动启动下一轮
+                    else:
+                        self._logger.info("[飞轮] 无A+关键词搜索数据，跳过 Phase B")
+                        self._notify_stage("flywheel", "Phase B: 跳过(无数据)", done=1, total=1)
                 except Exception as e:
-                    self._logger.error(f"[货源推送] 启动失败: {e}")
+                    self._logger.error(f"[飞轮 Phase B] 异常: {e}")
+                    import traceback
+                    self._logger.error(traceback.format_exc())
 
-            _checkpoint("product_scoring")
+                _checkpoint("flywheel_b")
 
-        # ═══════════ 保存结果 ═══════════
-        self._save_all_results(all_kw_results, all_pd_results, output_dir)
+            # ═══════════ 阶段5b: 推送货源 + 等待PDD完成 ═══════════
+            if last_stage in ("product_scoring",):
+                if sa_items_to_push and self._supply_engine:
+                    self._logger.info(f"[货源推送] 共 {len(sa_items_to_push)} 件S/A商品推送到货源查找")
+                    try:
+                        self._supply_engine.start(sa_items_to_push)
+                    except Exception as e:
+                        self._logger.error(f"[货源推送] 启动失败: {e}")
+
+                _checkpoint("product_scoring")
+
+        # ═══════════ 等待货源查找完成（PDD占着手机，Phase C不能跑）═══════════
+        if self._supply_engine and self._supply_engine.running:
+            self._logger.info("[采集] 等待货源查找队列完成（PDD占用手机）...")
+            while self._supply_engine.running and self._running:
+                time.sleep(5)
+            if self._supply_engine.running:
+                self._supply_engine.stop()
+            self._logger.info("[采集] 货源查找已完成")
+
+        if not self._running:
+            return self._finish(all_kw_results, all_pd_results, all_supply_pushed, output_dir)
+
+        # ═══════════ 阶段5c: Phase C 验证搜索（需要闲鱼，PDD已结束）═══════════
+        if (last_stage in ("product_scoring",) and
+            self._flywheel_engine and self._bridge):
+            pending_words = self._flywheel_engine.get_pending_words()
+            if pending_words:
+                n_pending = len(pending_words)
+                self._notify_stage("flywheel_c", f"Phase C: 验证{n_pending}个待定词",
+                                  done=0, total=n_pending)
+                self._logger.info(f"[飞轮 Phase C] 验证 {n_pending} 个待定词")
+
+                pending_searches = []
+                for i, word in enumerate(pending_words):
+                    if not self._running:
+                        break
+                    try:
+                        self._notify_stage("flywheel_c",
+                            f"Phase C: {word}", done=i, total=n_pending)
+                        raw = self._bridge.collect_keyword(
+                            word, max_pages=1, detail_max=0, comment_max=0)
+                        if not raw.get("error"):
+                            pending_searches.append({
+                                "word": word,
+                                "numFound": raw.get("searchMeta", {}).get("numFound", 0),
+                                "search_items": raw.get("searchItems", []),
+                            })
+                            self._logger.info(f"[Phase C] {word}: "
+                                f"numFound={pending_searches[-1]['numFound']}")
+                    except Exception as e:
+                        self._logger.error(f"[Phase C] {word} 搜索异常: {e}")
+                    time.sleep(jitter(3, 5))
+
+                if pending_searches:
+                    c_result = self._flywheel_engine.run_phase_c(pending_searches)
+                    self._logger.info(
+                        f"[Phase C] 完成: {c_result['pass_count']}通过 "
+                        f"{c_result['watch_count']}观察 {c_result['discard_count']}淘汰")
+                    self._notify_stage("flywheel_c",
+                        f"Phase C: {c_result['pass_count']}通过 {c_result['discard_count']}淘汰",
+                        done=n_pending, total=n_pending)
+            else:
+                self._logger.info("[飞轮] 无待验证词，跳过 Phase C")
+                self._notify_stage("flywheel_c", "Phase C: 跳过(无待验证词)", done=1, total=1)
+
+        # ═══════════ 飞轮闭环：pass词自动进入下一轮 ═══════════
+        # 本轮数据加入累积
+        self._all_kw_acc.extend(all_kw_results)
+        self._all_pd_acc.extend(all_pd_results)
+        self._all_supply_acc.extend(all_supply_pushed)
+
+        if _round < self._flywheel_max_rounds and self._flywheel_engine:
+            new_pass = self._flywheel_engine.word_lib.get_pass_words()
+            new_round_words = [w for w in new_pass
+                              if w not in self._processed_keywords]
+            if new_round_words:
+                new_round_words = new_round_words[:self._flywheel_round_size]
+                self._processed_keywords.update(new_round_words)
+                self._logger.info(
+                    f"[飞轮闭环] 第{_round}轮完成 → 第{_round+1}轮: "
+                    f"{len(new_round_words)}个新词 → {', '.join(new_round_words[:10])}"
+                    f"{'...' if len(new_round_words) > 10 else ''}")
+                self._notify_stage("flywheel_c",
+                    f"飞轮闭环: 第{_round+1}轮 {len(new_round_words)}词",
+                    done=_round, total=self._flywheel_max_rounds)
+                return self._run(new_round_words, output_dir, _round=_round + 1)
+            else:
+                self._logger.info(f"[飞轮闭环] 第{_round}轮: 无新pass词，飞轮停止")
+
+        # ═══════════ 最终轮：保存全部累积结果 ═══════════
+        self._save_all_results(self._all_kw_acc, self._all_pd_acc, output_dir)
         _checkpoint("done")
-        # 清理状态文件（成功完成）
         try:
             state_path.unlink(missing_ok=True)
         except Exception:
             pass
-        return self._finish(all_kw_results, all_pd_results, all_supply_pushed, output_dir)
+        return self._finish(self._all_kw_acc, self._all_pd_acc, self._all_supply_acc, output_dir)
 
     def _save_all_results(self, kw_results: list, pd_results: list, output_dir: Path):
         """保存完整结果到JSON + Excel"""
@@ -795,6 +1211,111 @@ class CollectionEngine:
             self._logger.info(f"[采集] Excel已保存: {xlsx_path}")
         except Exception as e:
             self._logger.warn(f"[采集] Excel导出失败: {e}")
+
+        # ── 评分进化：积累训练样本（AI品类归并）──
+        if self._scoring_evo:
+            # 先批量 AI 推断品类
+            kw_names = [kw.get("keyword", "") for kw in kw_results if kw.get("grade") != "N/A"]
+            self._batch_infer_categories(kw_names)
+
+            for kw in kw_results:
+                kw_name = kw.get("keyword", "")
+                if not kw_name or kw.get("grade") == "N/A":
+                    continue
+                dims = kw.get("scores", {})
+                if not dims:
+                    continue
+                category = self._infer_category(kw_name)
+                self._scoring_evo.add_record(
+                    category, kw_name, kw.get("total_100", 0), dims,
+                    actual_profit=None,
+                )
+            stats = self._scoring_evo.stats()
+            self._logger.info(
+                f"[进化] 已积累 {stats['total_records']} 条样本 "
+                f"({stats['categories_with_data']} 品类)")
+
+    def _infer_category(self, keyword: str) -> str:
+        """从关键词推断品类（AI批量分类，结果缓存）"""
+        # 初始化缓存
+        if not hasattr(self, '_category_cache'):
+            self._category_cache = {}
+        if keyword in self._category_cache:
+            return self._category_cache[keyword]
+
+        # 延迟到 _save_all_results 批量调用
+        self._category_cache[keyword] = keyword
+        return keyword
+
+    def _batch_infer_categories(self, keywords: List[str]):
+        """批量用 AI 推断品类（一次API调用覆盖所有词）"""
+        if not hasattr(self, '_category_cache'):
+            self._category_cache = {}
+
+        uncached = [k for k in keywords if self._category_cache.get(k) == k]
+        if not uncached:
+            return
+
+        api_key = self._settings.get("api", {}).get("deepseek_api_key", "")
+        if not api_key:
+            self._logger.info("[进化] 无 API Key，使用关键词自身作为品类")
+            return
+
+        try:
+            from engines.ai_client import AIClient
+            client = AIClient(api_key, provider="deepseek")
+
+            kw_list = "\n".join(uncached)
+            prompt = f"""将以下闲鱼搜索词归类到品类。每个词只归入一个品类，品类名用2-4个字（如：自行车、家电、服饰、户外露营、数码3C）。
+
+搜索词：
+{kw_list}
+
+返回JSON（不要markdown代码块）：
+{{"categories": [{{"keyword": "捷安特ATX660", "category": "自行车"}}, ...]}}"""
+
+            result = client.chat_json(
+                "你是电商选品品类分析师。将搜索词归入品类，品类名简短通用。",
+                prompt,
+            )
+            for item in result.get("categories", []):
+                kw = item.get("keyword", "")
+                cat = item.get("category", kw)
+                if kw:
+                    self._category_cache[kw] = cat
+            self._logger.info(f"[进化] AI品类推断: {len(result.get('categories', []))}词")
+        except Exception as e:
+            self._logger.warn(f"[进化] AI品类推断失败，使用规则兜底: {e}")
+            self._fallback_infer_categories(uncached)
+
+    def _fallback_infer_categories(self, keywords: List[str]):
+        """规则兜底：关键词→品类（AI不可用时）"""
+        patterns = [
+            ("自行车", ["自行车", "公路车", "山地车", "atx", "escape", "黑客", "ad350", "捷安特", "喜德盛", "骑行"]),
+            ("服饰", ["三叶草", "adidas", "华夫格", "外套", "夹克", "卫衣", "针织", "耐克", "nike", "半拉链"]),
+            ("户外露营", ["天幕", "露营", "帐篷", "遮阳", "月亮椅", "克米特", "户外"]),
+            ("打印机", ["打印机", "激光", "惠普", "兄弟", "一体机"]),
+            ("家电", ["微波炉", "洗衣机", "空气净化", "吸尘器", "戴森", "美的", "松下"]),
+            ("家居收纳", ["衣帽架", "衣架", "晾衣", "置物架", "收纳", "宜家", "书桌"]),
+            ("数码3C", ["笔记本", "电脑", "显示器", "充电宝", "小米", "大疆", "无人机"]),
+            ("户外运动", ["凯乐石", "始祖鸟", "猛犸象", "露露", "冲锋衣", "软壳", "速干"]),
+            ("轻奢饰品", ["apm", "coach", "古驰", "托特包", "手镯", "玉镯", "戒指"]),
+            ("钓具", ["钓鱼", "钓伞"]),
+            ("汽车周边", ["充电桩", "雨刷器"]),
+            ("家具", ["床", "柜", "桌", "椅", "沙发", "茶台"]),
+            ("宠物用品", ["猫", "狗", "宠物", "鸡笼", "鸟笼", "兔笼", "鱼缸"]),
+            ("男装", ["西服", "休闲裤", "哈吉斯", "比音勒芬", "利郎", "哥伦比亚"]),
+        ]
+        for kw in keywords:
+            # 已分类的跳过
+            cached = self._category_cache.get(kw)
+            if cached and cached != kw:
+                continue
+            kw_lower = kw.lower()
+            for cat, terms in patterns:
+                if any(t in kw_lower for t in terms):
+                    self._category_cache[kw] = cat
+                    break
 
         self._logger.info(f"[采集] 全部数据已保存到 {output_dir}")
 

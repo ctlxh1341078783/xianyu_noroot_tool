@@ -24,6 +24,13 @@ except ImportError as e:
     HAS_FULL_IMPL = False
     _IMPORT_ERROR = str(e)
 
+# 多多进宝 API
+try:
+    from .pdd_ddk_api import DdkSupplyFinder, get_call_count
+    HAS_DDK_API = True
+except ImportError:
+    HAS_DDK_API = False
+
 
 def _safe_float(val) -> float:
     """安全转float，处理 ¥24 / '24.00' / 24 等格式"""
@@ -231,6 +238,33 @@ class SupplyFinderEngine:
 
     # ── 内部 ──
 
+    def _setup_dual_channel(self):
+        """
+        双通道选品：API 优先，手机兜底
+        替换 controller.search_and_collect 为 API-first 版本
+        """
+        if not HAS_DDK_API:
+            self._logger.info("[货源] 多多进宝 API 不可用，仅使用手机通道")
+            return
+
+        self._ddk_finder = DdkSupplyFinder()
+        self._ddk_finder.set_logger(self._logger.info)
+        self._original_search = self._controller.search_and_collect
+
+        def dual_search(keyword, scroll_pages=5, max_items=20):
+            """API 优先搜索，失败或空结果时降级手机"""
+            api_results = self._ddk_finder.search_and_collect(
+                keyword, scroll_pages=scroll_pages, max_items=max_items
+            )
+            if api_results:
+                return api_results
+
+            self._logger.info(f"  🔄 [DDK API] 无结果，降级到手机搜索: 【{keyword}】")
+            return self._original_search(keyword, scroll_pages, max_items)
+
+        self._controller.search_and_collect = dual_search
+        self._logger.info(f"[货源] 双通道已启用: DDK API 优先 + 手机兜底")
+
     def _init_components(self) -> bool:
         """初始化PDD控制器 + AI + 调度器，完全复用原版逻辑"""
         # 1. 设置AI API Key（全局单例，MobileSupplyScheduler内部用 get_ai_cleaner() 获取）
@@ -252,6 +286,9 @@ class SupplyFinderEngine:
             except Exception as e:
                 self._logger.error(f"[货源] PDD设备连接异常: {e}")
                 return False
+
+        # 2.5 开启双通道：API 优先，手机兜底
+        self._setup_dual_channel()
 
         # 3. 确保PDD在前台并处于首页（原版GUI有独立"启动APP"按钮，引擎里自动处理）
         if not self._controller.launch_pinduoduo():

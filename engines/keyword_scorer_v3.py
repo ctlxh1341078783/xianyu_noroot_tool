@@ -5,9 +5,9 @@
 ╚══════════════════════════════════════════════════════════════════╝
 
 核心设计：三段漏斗
-  第1段：极速预检 (3秒/词)  → 无行情/均价极低/热度极低直接淘汰
-  第2段：快速海选 (15秒/词) → 6维评分，保留 A 级以上
-  第3段：精选完整 (40秒/词) → 补充完整数据，最终决策
+  第1段：极速预检 (3秒/词)  → 均价极低/热度极低淘汰；无行情→直通选品线
+  第2段：快速海选 (15秒/词) → 6维评分，保留 A 级以上（有行情词）
+  第3段：精选完整 (40秒/词) → 补充完整数据，最终决策（有行情词）
 
 评分维度 (总分100分制，内部120分归一化):
   1. 需求规模     0-20  — 每天有多少人搜这个词
@@ -147,7 +147,12 @@ class KeywordScorerV3:
             for t in (tabs or [])
         )
         if not has_market_tab:
-            return False, "无行情Tab / 非标品词，跳过"
+            # 无行情词：供给侧达阈值 → 直通选品线（选品线用完整商品数据判断）
+            num_found = market_data.get("numFound", 0)
+            if num_found >= 200:
+                return True, f"无行情Tab-直通选品线(numFound={num_found}>=200)"
+            else:
+                return False, f"无行情Tab且numFound={num_found}<200，供给侧不足"
 
         topbar = market_data.get("topbar", {}) or {}
         spu = topbar.get("spuHeader", {}) or {}

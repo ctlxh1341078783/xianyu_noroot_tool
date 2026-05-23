@@ -18,19 +18,46 @@ IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 
 def get_bundled_app_dir() -> Path:
+    """从内嵌的 zip 包解压主程序 .app，返回 .app 路径"""
     if IS_FROZEN:
-        return Path(sys._MEIPASS)
+        meipass = Path(sys._MEIPASS)
+        # 查找内嵌的 zip 包
+        zip_path = None
+        for item in meipass.iterdir():
+            if item.name.endswith(".zip"):
+                zip_path = item
+                break
+        if zip_path:
+            # 解压到临时目录
+            import zipfile
+            extract_dir = Path(tempfile.mkdtemp(prefix="xianyu_install_"))
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(extract_dir)
+            # 找到解压出的 .app
+            for item in extract_dir.iterdir():
+                if item.name.endswith(".app") and item.is_dir():
+                    return item
+            # Fallback: 返回解压目录本身
+            return extract_dir
+        # 没有 zip，按老方法查找
+        for item in meipass.iterdir():
+            if item.name.endswith(".app") and item.is_dir():
+                return item
+        return meipass
     else:
         base = Path(__file__).parent
-    app_dir = base / "dist" / "闲鱼数据采集分析工具"
-    if not app_dir.exists():
-        alt = base / "闲鱼数据采集分析工具"
-        if alt.exists():
-            return alt
-    return app_dir
+        app_dir = base / "dist" / "闲鱼数据采集分析工具.app"
+        if app_dir.exists():
+            return app_dir
+        app_dir = base / "dist" / "闲鱼数据采集分析工具"
+        if app_dir.exists():
+            return app_dir
+        return app_dir
 
 def get_default_install_path() -> Path:
-    if IS_WIN:
+    if IS_MAC:
+        return Path("/Applications")
+    elif IS_WIN:
         import ctypes
         try:
             is_admin = ctypes.windll.shell32.IsUserAnAdmin()
@@ -41,19 +68,21 @@ def get_default_install_path() -> Path:
         else:
             local = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
             return Path(local) / "Programs" / "闲鱼数据采集分析工具"
-    elif IS_MAC:
-        return Path("/Applications/闲鱼数据采集分析工具")
     else:
         return Path.home() / "Applications" / "闲鱼数据采集分析工具"
 
 def get_exe_name() -> str:
-    if IS_WIN:
+    if IS_MAC:
+        return "闲鱼数据采集分析工具.app"
+    elif IS_WIN:
         return "闲鱼数据采集分析工具.exe"
     else:
         return "闲鱼数据采集分析工具"
 
 def get_uninstaller_name() -> str:
-    if IS_WIN:
+    if IS_MAC:
+        return "闲鱼工具卸载程序.app"
+    elif IS_WIN:
         return "闲鱼工具卸载程序.exe"
     else:
         return "闲鱼工具卸载程序"
@@ -168,22 +197,40 @@ class InstallerWindow:
 
         self._report(10, f"正在安装 ({total} 个文件)...")
 
-        # 复制文件
-        for i, src in enumerate(files):
+        if IS_MAC and source.name.endswith(".app"):
+            # macOS .app 包：整体复制到目标目录
+            app_dest = target / source.name
             try:
-                rel = src.relative_to(source)
-                dst = target / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(dst))
-            except Exception as e:
-                self._report_error(f"复制失败: {src.name}\n{e}")
+                if app_dest.exists():
+                    shutil.rmtree(str(app_dest))
+                shutil.copytree(str(source), str(app_dest))
+            except PermissionError:
+                self._report_error(
+                    f"权限不足，无法写入:\n{app_dest}\n\n"
+                    "请选择其他目录，或以管理员身份运行"
+                )
                 return
-            pct = 10 + int((i + 1) / total * 60)
-            if i % 50 == 0 or pct % 10 == 0:
-                self._report(pct, f"正在安装... ({i+1}/{total})")
-
-        self._report(75, "正在创建快捷方式...")
-        self._create_shortcuts(target)
+            except Exception as e:
+                self._report_error(f"复制失败:\n{e}")
+                return
+            self._report(70, "正在创建快捷方式...")
+            self._create_shortcuts(target, app_dest)
+        else:
+            # Windows / 通用：逐文件复制
+            for i, src in enumerate(files):
+                try:
+                    rel = src.relative_to(source)
+                    dst = target / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(src), str(dst))
+                except Exception as e:
+                    self._report_error(f"复制失败: {src.name}\n{e}")
+                    return
+                pct = 10 + int((i + 1) / total * 60)
+                if i % 50 == 0 or pct % 10 == 0:
+                    self._report(pct, f"正在安装... ({i+1}/{total})")
+            self._report(70, "正在创建快捷方式...")
+            self._create_shortcuts(target)
 
         self._report(85, "正在注册卸载信息...")
         self._register_uninstall(target)
@@ -193,17 +240,16 @@ class InstallerWindow:
 
         self._report(100, "安装完成！")
 
-    def _create_shortcuts(self, target: Path):
-        exe_name = get_exe_name()
-        exe = target / exe_name
-        if not exe.exists():
-            return
-
+    def _create_shortcuts(self, target: Path, app_bundle: Path = None):
         if IS_WIN:
+            exe_name = get_exe_name()
+            exe = target / exe_name
+            if not exe.exists():
+                return
             self._create_desktop_shortcut_win(exe)
             self._create_start_menu_win(target, exe)
-        elif IS_MAC:
-            self._create_desktop_shortcut_mac(target, exe)
+        elif IS_MAC and app_bundle:
+            self._create_desktop_shortcut_mac(app_bundle)
 
     def _create_desktop_shortcut_win(self, target_exe: Path):
         name = "闲鱼数据采集分析工具"
@@ -256,18 +302,15 @@ $sc2.Save()
         except Exception:
             pass
 
-    def _create_desktop_shortcut_mac(self, target: Path, target_exe: Path):
-        """macOS: 在桌面创建启动脚本"""
-        name = "闲鱼数据采集分析工具"
+    def _create_desktop_shortcut_mac(self, app_bundle: Path):
+        """macOS: 在桌面创建 .app 的替身(alias)"""
+        name = app_bundle.name
         desktop = Path.home() / "Desktop"
-        shortcut = desktop / f"{name}.command"
-        content = f'''#!/bin/bash
-cd "{target}"
-open "{target_exe}"
-'''
+        shortcut = desktop / name
         try:
-            shortcut.write_text(content)
-            os.chmod(shortcut, 0o755)
+            os.symlink(str(app_bundle), str(shortcut))
+        except FileExistsError:
+            pass
         except Exception:
             pass
 
@@ -300,12 +343,26 @@ open "{target_exe}"
                 continue
 
     def _copy_uninstaller(self, target: Path):
-        """卸载程序由构建脚本预先复制到 dist 中，安装时直接复制即可"""
+        """从内嵌数据中解出卸载程序，复制到安装目录"""
         uninst_name = get_uninstaller_name()
-        source = get_bundled_app_dir()
-        uninst = source / uninst_name
-        if uninst.exists():
-            shutil.copy2(str(uninst), str(target / uninst_name))
+        uninst_dest = target / uninst_name
+
+        if uninst_dest.exists():
+            shutil.rmtree(str(uninst_dest))
+
+        # 从 bundled app 的 Resources 中找卸载程序
+        bundled = get_bundled_app_dir()
+        uninst_src = bundled / "Contents" / "Resources" / uninst_name
+        if uninst_src.exists():
+            shutil.copytree(str(uninst_src), str(uninst_dest))
+            return
+
+        # Fallback: 在 app 根目录或 _MEIPASS 中递归查找
+        for search_root in [bundled.parent, bundled]:
+            for item in search_root.rglob(uninst_name):
+                if item.is_dir() and item != uninst_dest:
+                    shutil.copytree(str(item), str(uninst_dest))
+                    return
 
     def _report(self, pct: int, msg: str):
         self.root.after(0, lambda: [
@@ -327,9 +384,14 @@ open "{target_exe}"
         else:
             self.install_btn.config(state=tk.NORMAL, text="安装完成 ✓")
             if self.launch_var.get():
-                target = Path(self.path_var.get()) / get_exe_name()
-                if target.exists():
-                    subprocess.Popen([str(target)], cwd=str(target.parent))
+                if IS_MAC:
+                    installed_app = Path(self.path_var.get()) / get_exe_name()
+                    if installed_app.exists():
+                        subprocess.Popen(["open", str(installed_app)])
+                else:
+                    target = Path(self.path_var.get()) / get_exe_name()
+                    if target.exists():
+                        subprocess.Popen([str(target)], cwd=str(target.parent))
 
     def run(self):
         self.root.mainloop()

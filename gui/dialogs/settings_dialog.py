@@ -108,10 +108,18 @@ class SettingsDialog(tk.Toplevel):
         s = self._config.settings
 
         # API
+        self._vars["deepseek_api_key"] = tk.StringVar(value=s.get("api", {}).get("deepseek_api_key", ""), master=self)
         self._vars["zhipu_api_key"] = tk.StringVar(value=s.get("api", {}).get("zhipu_api_key", ""), master=self)
         self._vars["webhook_url"] = tk.StringVar(value=s.get("api", {}).get("webhook_url", ""), master=self)
-        self._vars["api_status"] = tk.StringVar(value="", master=self)
+        self._vars["ds_api_status"] = tk.StringVar(value="", master=self)
+        self._vars["zhipu_api_status"] = tk.StringVar(value="", master=self)
         self._vars["webhook_status"] = tk.StringVar(value="", master=self)
+
+        # Flywheel
+        fw = s.get("flywheel", {})
+        self._vars["fw_queue_max"] = tk.IntVar(value=fw.get("word_queue_max_size", 200))
+        self._vars["fw_phase_c_batch"] = tk.IntVar(value=fw.get("phase_c_batch_size", 20))
+        self._vars["fw_output_interval"] = tk.IntVar(value=fw.get("output_min_interval_sec", 30))
 
         # Collection
         c = s.get("collection", {})
@@ -170,13 +178,20 @@ class SettingsDialog(tk.Toplevel):
     def _build_api_section(self):
         p = self._api_frame
         self._section(p, "API密钥")
+        self._row_with_test(p, "DeepSeek API Key", self._vars["deepseek_api_key"], 40,
+                           self._test_deepseek_api, self._vars["ds_api_status"])
         self._row_with_test(p, "智谱API Key", self._vars["zhipu_api_key"], 40,
-                           self._test_zhipu_api, self._vars["api_status"])
+                           self._test_zhipu_api, self._vars["zhipu_api_status"])
         self._row_with_test(p, "企业微信Webhook", self._vars["webhook_url"], 40,
                            self._test_webhook, self._vars["webhook_status"])
 
     def _build_collection_section(self):
         p = self._collection_frame
+
+        sec_fw = self._section(p, "飞轮设置")
+        self._row(sec_fw, "词库队列上限", self._vars["fw_queue_max"])
+        self._row(sec_fw, "Phase C 攒批验证数", self._vars["fw_phase_c_batch"])
+        self._row(sec_fw, "飞轮产出最小间隔(秒)", self._vars["fw_output_interval"])
 
         sec = self._section(p, "翻页设置")
         self._row(sec, "搜索翻页数", self._vars["search_pages"])
@@ -252,9 +267,9 @@ class SettingsDialog(tk.Toplevel):
     def _test_zhipu_api(self):
         api_key = self._vars["zhipu_api_key"].get().strip()
         if not api_key:
-            self._vars["api_status"].set("请先输入Key")
+            self._vars["zhipu_api_status"].set("请先输入Key")
             return
-        self._vars["api_status"].set("测试中...")
+        self._vars["zhipu_api_status"].set("测试中...")
         import threading
         def _do():
             try:
@@ -266,11 +281,35 @@ class SettingsDialog(tk.Toplevel):
                     timeout=15
                 )
                 if resp.status_code == 200:
-                    self._vars["api_status"].set("✅ 连接成功")
+                    self._vars["zhipu_api_status"].set("✅ 连接成功")
                 else:
-                    self._vars["api_status"].set(f"❌ HTTP {resp.status_code}")
+                    self._vars["zhipu_api_status"].set(f"❌ HTTP {resp.status_code}")
             except Exception as e:
-                self._vars["api_status"].set(f"❌ {str(e)[:20]}")
+                self._vars["zhipu_api_status"].set(f"❌ {str(e)[:20]}")
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _test_deepseek_api(self):
+        api_key = self._vars["deepseek_api_key"].get().strip()
+        if not api_key:
+            self._vars["ds_api_status"].set("请先输入Key")
+            return
+        self._vars["ds_api_status"].set("测试中...")
+        import threading
+        def _do():
+            try:
+                import requests, json
+                resp = requests.post(
+                    "https://api.deepseek.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 10},
+                    timeout=15
+                )
+                if resp.status_code == 200:
+                    self._vars["ds_api_status"].set("✅ 连接成功")
+                else:
+                    self._vars["ds_api_status"].set(f"❌ HTTP {resp.status_code}")
+            except Exception as e:
+                self._vars["ds_api_status"].set(f"❌ {str(e)[:20]}")
         threading.Thread(target=_do, daemon=True).start()
 
     def _test_webhook(self):
@@ -297,8 +336,14 @@ class SettingsDialog(tk.Toplevel):
         try:
             new_values = {
                 "api": {
+                    "deepseek_api_key": self._vars["deepseek_api_key"].get(),
                     "zhipu_api_key": self._vars["zhipu_api_key"].get(),
                     "webhook_url": self._vars["webhook_url"].get(),
+                },
+                "flywheel": {
+                    "word_queue_max_size": self._vars["fw_queue_max"].get(),
+                    "phase_c_batch_size": self._vars["fw_phase_c_batch"].get(),
+                    "output_min_interval_sec": self._vars["fw_output_interval"].get(),
                 },
                 "collection": {
                     "search_pages": self._vars["search_pages"].get(),

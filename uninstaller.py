@@ -56,7 +56,16 @@ class UninstallerWindow:
         body = tk.Frame(self.root, padx=20, pady=15)
         body.pack(fill=tk.BOTH, expand=True)
 
-        if IS_WIN:
+        if IS_MAC:
+            # 查找已安装的主程序
+            main_app = self._install_dir / f"{APP_NAME}.app"
+            warnings = [
+                "以下操作将不可撤销：",
+                f"  删除主程序: {main_app}",
+                f"  删除卸载程序自身",
+                "  删除桌面快捷方式",
+            ]
+        elif IS_WIN:
             warnings = [
                 "以下操作将不可撤销：",
                 f"  删除安装目录: {self._install_dir}",
@@ -108,6 +117,11 @@ class UninstallerWindow:
             self.root.update()
             self._remove_registry()
 
+        if IS_MAC:
+            self.status_var.set("正在删除主程序...")
+            self.root.update()
+            self._remove_main_app()
+
         self.status_var.set("正在卸载...")
         self.root.update()
         self._self_destruct()
@@ -132,9 +146,21 @@ class UninstallerWindow:
         elif IS_MAC:
             try:
                 desktop = Path.home() / "Desktop"
-                shortcut = desktop / f"{APP_NAME}.command"
-                if shortcut.exists():
-                    os.remove(shortcut)
+                # 移除桌面替身/快捷方式
+                for name in [f"{APP_NAME}.app", f"{APP_NAME}.command"]:
+                    shortcut = desktop / name
+                    if shortcut.exists():
+                        if shortcut.is_symlink() or shortcut.is_file():
+                            shortcut.unlink()
+            except Exception:
+                pass
+
+    def _remove_main_app(self):
+        """macOS: 删除已安装的主程序 .app"""
+        main_app = self._install_dir / f"{APP_NAME}.app"
+        if main_app.exists():
+            try:
+                shutil.rmtree(str(main_app))
             except Exception:
                 pass
 
@@ -161,6 +187,25 @@ class UninstallerWindow:
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     close_fds=True,
                 )
+            except Exception:
+                pass
+        elif IS_MAC:
+            # macOS: 删除主程序 .app 和卸载程序自身
+            main_app = str(self._install_dir / f"{APP_NAME}.app")
+            uninst_app = str(self._install_dir / "闲鱼工具卸载程序.app")
+            sh_path = Path(tempfile.gettempdir()) / "_xianyu_uninst.sh"
+            script = f'''#!/bin/bash
+sleep 2
+rm -rf "{main_app}"
+rm -rf "{uninst_app}"
+rm -f "$0"
+'''
+            sh_path.write_text(script)
+            os.chmod(sh_path, 0o755)
+            try:
+                subprocess.Popen(["nohup", "bash", str(sh_path)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               close_fds=True)
             except Exception:
                 pass
         else:

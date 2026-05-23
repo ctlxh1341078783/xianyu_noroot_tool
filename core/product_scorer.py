@@ -59,7 +59,7 @@ class ProductScorer:
             try:
                 item_id = item.get("itemId", "")
                 detail = details.get(item_id, {})
-                scores = self._score_one(keyword, item, detail, market_avg_price, no_bargain_rate)
+                scores = self._score_one(keyword, item, detail, market_avg_price, no_bargain_rate, market)
                 results.append(scores)
             except Exception as e:
                 self._log.debug(f"[选品] {item.get('itemId','')} 评分异常: {e}")
@@ -67,7 +67,7 @@ class ProductScorer:
         return results
 
     def _score_one(self, keyword: str, item: dict, detail: dict,
-                   market_avg_price: float, no_bargain_rate: float) -> dict:
+                   market_avg_price: float, no_bargain_rate: float, market: dict = None) -> dict:
         item_do = detail.get("itemDO", {}) or {}
         seller = detail.get("sellerDO", {}) or {}
 
@@ -76,7 +76,7 @@ class ProductScorer:
         dims["price_advantage"] = self._score_price_advantage(item, market_avg_price, no_bargain_rate)
         dims["seller_verification"] = self._score_seller_verification(seller)
         dims["timeliness"] = self._score_timeliness(item_do)
-        dims["supply_attribute"] = self._score_supply_attribute(item, market)
+        dims["supply_attribute"] = self._score_supply_attribute(item, market or {})
 
         total = sum(dims.values())
         grade = self._get_grade(total)

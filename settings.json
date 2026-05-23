@@ -11,57 +11,88 @@
     }
   ],
   "api": {
-    "zhipu_api_key": "",
-    "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=915cc39b-eb16-41c8-a0b9-34130442b930"
+    "zhipu_api_key": "your_zhipu_api_key_here",
+    "webhook_url": "your_webhook_url_here",
+    "deepseek_api_key": "your_deepseek_api_key_here"
   },
   "collection": {
-    "search_pages": 10,
-    "hs_pages": 3,
-    "detail_max": 5,
-    "comment_max": 3,
+    "search_pages": 15,
+    "hs_pages": 5,
+    "detail_max": 8,
+    "comment_max": 5,
     "rate_search": [
-      4,
-      8
-    ],
-    "rate_detail": [
-      3,
-      6
-    ],
-    "rate_comment": [
-      3,
-      6
-    ],
-    "rate_market": [
-      3,
-      5
-    ],
-    "rate_keyword": [
       8,
       15
     ],
+    "rate_detail": [
+      5,
+      10
+    ],
+    "rate_comment": [
+      5,
+      10
+    ],
+    "rate_market": [
+      5,
+      8
+    ],
+    "rate_keyword": [
+      12,
+      25
+    ],
+    "_anti_risk_note": "防风控：间隔已翻倍。search 8-15s, keyword 12-25s",
+    "batch_pause_every_n": 15,
+    "batch_pause_seconds": 180,
+    "batch_pause_jitter": 60,
     "kw_push_threshold": 75,
     "pd_push_threshold": 75
   },
   "scoring": {
     "keyword_grade_thresholds": {
-      "S": 90,
-      "A": 75,
-      "B": 55,
-      "C": 35,
+      "S": 80,
+      "A": 60,
+      "B": 30,
+      "C": 10,
       "D": 0
     },
     "product_grade_thresholds": {
-      "S": 90,
-      "A": 75,
-      "B": 55,
-      "C": 40,
+      "S": 80,
+      "A": 60,
+      "B": 30,
+      "C": 10,
       "D": 0
     },
-    "precheck_min_uv": 200,
+    "precheck_min_uv": 10,
     "precheck_max_price_drop": -20
   },
+  "rate_limit": {
+    "min_interval_sec": 3.0,
+    "max_interval_sec": 10.0,
+    "backoff_on_queue": true,
+    "queue_warn_threshold": 5
+  },
+  "flywheel": {
+    "phase_c_batch_size": 20,
+    "phase_c_max_lease_sec": 120,
+    "word_queue_max_size": 200,
+    "a_plus_queue_max_size": 50,
+    "good_product_queue_max_size": 30,
+    "output_min_interval_sec": 30
+  },
+  "foreground": {
+    "xianyu_lease_sec": 120,
+    "pdd_lease_sec": 60,
+    "renewal_warning_sec": 15,
+    "pdd_max_wait_sec": 120
+  },
+  "ddk": {
+    "client_id": "your_ddk_client_id_here",
+    "client_secret": "your_ddk_client_secret_here",
+    "pid": "44415548_315962171",
+    "daily_limit": 2000
+  },
   "supply_finder": {
-    "score_threshold": 75,
+    "score_threshold": 10,
     "sim_threshold": 0.8,
     "scroll_pages": 5,
     "max_items": 20,

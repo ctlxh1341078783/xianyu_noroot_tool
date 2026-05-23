@@ -335,53 +335,79 @@ class SupplyFinderTab:
         self._btn(dev_row2, "重连设备", self._reconnect_device, width=10).pack(side=tk.LEFT)
         self._btn(dev_row2, "重载模型", self._reload_model, width=10).pack(side=tk.LEFT, padx=(6, 0))
 
-        # ── 参数设置卡片 ──
+        # ── 通用设置（DDK API + 手机兜底都适用）──
         sf_settings = self.app.config.settings.get("supply_finder", {})
 
-        param_frame = self._section(inner, "参数设置")
-        param_frame.pack(fill=tk.X, padx=8, pady=(4, 4))
+        common_frame = self._section(inner, "通用设置（DDK API + 手机兜底）")
+        common_frame.pack(fill=tk.X, padx=8, pady=(4, 4))
 
-        param_grid = tk.Frame(param_frame, bg=SURF)
-        param_grid.pack(fill=tk.X, padx=6, pady=6)
+        common_grid = tk.Frame(common_frame, bg=SURF)
+        common_grid.pack(fill=tk.X, padx=6, pady=6)
 
-        params = [
+        common_params = [
             ("相似阈值:", "sim_thresh_e", str(sf_settings.get("sim_threshold", 0.8)), 6),
             ("标题翻页:", "scroll_pages_e", str(sf_settings.get("scroll_pages", 5)), 6),
             ("最多采集:", "max_items_e", str(sf_settings.get("max_items", 20)), 6),
-            ("图搜翻页:", "img_scroll_pages_e", str(sf_settings.get("img_scroll_pages", 3)), 6),
-            ("间隔(秒):", "delay_between_e", str(sf_settings.get("delay_between_products", 8)), 6),
             ("推送评分:", "score_thresh_e", str(sf_settings.get("score_threshold", 75)), 6),
-            ("每N件休息:", "pause_every_e", str(sf_settings.get("pause_every", 5)), 6),
-            ("休息(秒):", "pause_dur_e", str(sf_settings.get("pause_duration", 60)), 6),
         ]
 
-        for i, (label, attr, default, width) in enumerate(params):
+        for i, (label, attr, default, width) in enumerate(common_params):
             row, col = i // 2, i % 2
-            f = tk.Frame(param_grid, bg=SURF)
+            f = tk.Frame(common_grid, bg=SURF)
             f.grid(row=row, column=col, sticky="ew", padx=4, pady=3)
             tk.Label(f, text=label, bg=SURF, fg=FG,
                      font=FONTS["ui"], width=9, anchor='w').pack(side=tk.LEFT)
             entry = self._entry(f, width=width, default=default)
             entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
             setattr(self, attr, entry)
+        common_grid.columnconfigure(0, weight=1)
+        common_grid.columnconfigure(1, weight=1)
 
-        param_grid.columnconfigure(0, weight=1)
-        param_grid.columnconfigure(1, weight=1)
-
-        toggle_row = tk.Frame(param_frame, bg=SURF)
-        toggle_row.pack(fill=tk.X, padx=6, pady=(2, 4))
-        self.use_img_search_var = tk.BooleanVar(value=sf_settings.get("use_img_search", True))
+        # AI同款比对开关（通用）
         self.use_ai_compare_var = tk.BooleanVar(value=sf_settings.get("use_ai_compare", True))
-        tk.Checkbutton(toggle_row, text="启用以图搜款",
+        toggle_row_c = tk.Frame(common_frame, bg=SURF)
+        toggle_row_c.pack(fill=tk.X, padx=6, pady=(2, 4))
+        tk.Checkbutton(toggle_row_c, text="AI批量同款比对（DDK+图搜都适用）",
+                       variable=self.use_ai_compare_var,
+                       bg=SURF, fg=FG, font=FONTS["ui"],
+                       selectcolor=SURF).pack(side=tk.LEFT)
+
+        # ── 手机兜底设置（仅 uiautomator2 触发）──
+        fallback_frame = self._section(inner, "手机兜底设置（仅DDK无结果时触发）")
+        fallback_frame.pack(fill=tk.X, padx=8, pady=(4, 4))
+
+        fallback_grid = tk.Frame(fallback_frame, bg=SURF)
+        fallback_grid.pack(fill=tk.X, padx=6, pady=6)
+
+        fallback_params = [
+            ("图搜翻页:", "img_scroll_pages_e", str(sf_settings.get("img_scroll_pages", 3)), 6),
+            ("间隔(秒):", "delay_between_e", str(sf_settings.get("delay_between_products", 8)), 6),
+            ("每N件休息:", "pause_every_e", str(sf_settings.get("pause_every", 5)), 6),
+            ("休息(秒):", "pause_dur_e", str(sf_settings.get("pause_duration", 60)), 6),
+        ]
+
+        for i, (label, attr, default, width) in enumerate(fallback_params):
+            row, col = i // 2, i % 2
+            f = tk.Frame(fallback_grid, bg=SURF)
+            f.grid(row=row, column=col, sticky="ew", padx=4, pady=3)
+            tk.Label(f, text=label, bg=SURF, fg=FG,
+                     font=FONTS["ui"], width=9, anchor='w').pack(side=tk.LEFT)
+            entry = self._entry(f, width=width, default=default)
+            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            setattr(self, attr, entry)
+        fallback_grid.columnconfigure(0, weight=1)
+        fallback_grid.columnconfigure(1, weight=1)
+
+        # 图搜开关（兜底专属）
+        self.use_img_search_var = tk.BooleanVar(value=sf_settings.get("use_img_search", True))
+        toggle_row_f = tk.Frame(fallback_frame, bg=SURF)
+        toggle_row_f.pack(fill=tk.X, padx=6, pady=(2, 4))
+        tk.Checkbutton(toggle_row_f, text="启用以图搜款（标题搜0结果时自动触发）",
                        variable=self.use_img_search_var,
                        bg=SURF, fg=FG, font=FONTS["ui"],
                        selectcolor=SURF).pack(side=tk.LEFT)
-        tk.Checkbutton(toggle_row, text="AI批量同款比对",
-                       variable=self.use_ai_compare_var,
-                       bg=SURF, fg=FG, font=FONTS["ui"],
-                       selectcolor=SURF).pack(side=tk.LEFT, padx=(12, 0))
 
-        update_btn_frame = tk.Frame(param_frame, bg=SURF)
+        update_btn_frame = tk.Frame(fallback_frame, bg=SURF)
         update_btn_frame.pack(fill=tk.X, padx=6, pady=(0, 6))
         self.update_settings_btn = self._btn(update_btn_frame, "更新设置",
                                               self._update_scheduler_settings, bg=ACC, width=12)
@@ -390,8 +416,8 @@ class SupplyFinderTab:
         tk.Label(update_btn_frame, text="修改参数后点击更新，立即生效", bg=SURF, fg=FG_M,
                  font=FONTS["ui"]).pack(side=tk.LEFT)
 
-        # ── 定时推送卡片 ──
-        sched_frame = self._section(inner, "定时推送 & 保护设置")
+        # ── 定时推送（通用）──
+        sched_frame = self._section(inner, "定时推送（通用）")
         sched_frame.pack(fill=tk.X, padx=8, pady=(4, 4))
 
         sched_inner = tk.Frame(sched_frame, bg=SURF)
@@ -415,22 +441,6 @@ class SupplyFinderTab:
                                           bg=SURF, fg=FG_M, font=FONTS["ui"])
         self.sched_status_lbl.pack(anchor="w", pady=(2, 4))
 
-        r_empty = tk.Frame(sched_inner, bg=SURF)
-        r_empty.pack(fill=tk.X, pady=2)
-        tk.Label(r_empty, text="连续", bg=SURF, fg=FG, font=FONTS["ui"]).pack(side=tk.LEFT)
-        self.empty_threshold_e = self._entry(r_empty, width=4, default="3")
-        self.empty_threshold_e.pack(side=tk.LEFT, padx=(4, 4))
-        tk.Label(r_empty, text="次采集到0个商品 → 触发风控告警+截图+暂停",
-                 bg=SURF, fg=FG_M, font=FONTS["ui"]).pack(side=tk.LEFT)
-
-        r_cache = tk.Frame(sched_inner, bg=SURF)
-        r_cache.pack(fill=tk.X, pady=2)
-        tk.Label(r_cache, text="运行超过", bg=SURF, fg=FG, font=FONTS["ui"]).pack(side=tk.LEFT)
-        self.cache_clear_interval_e = self._entry(r_cache, width=4, default="120")
-        self.cache_clear_interval_e.pack(side=tk.LEFT, padx=(4, 4))
-        tk.Label(r_cache, text="分钟 → 清理后台并重启PDD", bg=SURF, fg=FG_M,
-                 font=FONTS["ui"]).pack(side=tk.LEFT)
-
         r_webhook = tk.Frame(sched_inner, bg=SURF)
         r_webhook.pack(fill=tk.X, pady=(4, 2))
         tk.Label(r_webhook, text="企业微信通知:", bg=SURF, fg=FG, font=FONTS["ui"]).pack(side=tk.LEFT)
@@ -439,6 +449,29 @@ class SupplyFinderTab:
         self.webhook_status_lbl.pack(side=tk.LEFT, padx=(6, 0))
         tk.Label(r_webhook, text="（风控告警 + 正利润推送 + Excel文件）", bg=SURF, fg=FG_M,
                  font=FONTS["ui"]).pack(side=tk.LEFT, padx=(2, 0))
+
+        # ── 手机兜底保护（仅兜底方案）──
+        protect_frame = self._section(inner, "手机兜底保护（仅兜底方案触发）")
+        protect_frame.pack(fill=tk.X, padx=8, pady=(4, 4))
+
+        protect_inner = tk.Frame(protect_frame, bg=SURF)
+        protect_inner.pack(fill=tk.X, padx=6, pady=6)
+
+        r_empty = tk.Frame(protect_inner, bg=SURF)
+        r_empty.pack(fill=tk.X, pady=2)
+        tk.Label(r_empty, text="连续", bg=SURF, fg=FG, font=FONTS["ui"]).pack(side=tk.LEFT)
+        self.empty_threshold_e = self._entry(r_empty, width=4, default="3")
+        self.empty_threshold_e.pack(side=tk.LEFT, padx=(4, 4))
+        tk.Label(r_empty, text="次采集到0个商品 → 触发风控告警+截图+暂停",
+                 bg=SURF, fg=FG_M, font=FONTS["ui"]).pack(side=tk.LEFT)
+
+        r_cache = tk.Frame(protect_inner, bg=SURF)
+        r_cache.pack(fill=tk.X, pady=2)
+        tk.Label(r_cache, text="运行超过", bg=SURF, fg=FG, font=FONTS["ui"]).pack(side=tk.LEFT)
+        self.cache_clear_interval_e = self._entry(r_cache, width=4, default="120")
+        self.cache_clear_interval_e.pack(side=tk.LEFT, padx=(4, 4))
+        tk.Label(r_cache, text="分钟 → 清理后台并重启PDD", bg=SURF, fg=FG_M,
+                 font=FONTS["ui"]).pack(side=tk.LEFT)
 
         # ── 操作按钮 ──
         action_frame = self._section(inner, "操作")
@@ -508,8 +541,8 @@ class SupplyFinderTab:
 
         tk.Label(t2_frame, text="标题搜索同款/平替（双击商品行查看详情）",
                  bg=SURF2, fg=FG_M, font=FONTS["ui"]).pack(anchor='w')
-        t2_cols = ('#', '货源商品名', '匹配类型', '进价', '利润', '利润率%', '货源评分', '销量', '相似度', '比对', '推荐', '理由')
-        t2_widths = (28, 150, 70, 52, 58, 62, 58, 76, 56, 50, 56, 180)
+        t2_cols = ('#', '货源商品名', '匹配类型', '进价', '利润', '利润率%', '货源评分', '销量', '相似度', '比对', '推荐', '理由', '来源', '佣金', '货源链接')
+        t2_widths = (28, 150, 70, 52, 58, 62, 58, 76, 56, 50, 56, 180, 50, 52, 200)
         self.detail_tree = self._make_tree(t2_frame, t2_cols, t2_widths, height=4)
         self.detail_tree.tag_configure('best_src', background='#FFF3CD')
         self.detail_tree.tag_configure('good_src', background='#EAF7EF')
@@ -1048,6 +1081,11 @@ class SupplyFinderTab:
                 elif match_type == '部分匹配':
                     match_type_display = '部分'
 
+                src = it.get('source', '手机')
+                src_display = 'API' if src == 'ddk_api' else '手机'
+                comm = it.get('commission', 0)
+                comm_pct = it.get('promotion_rate', 0)
+                comm_str = f'¥{comm:.2f}({comm_pct}%)' if comm else '—'
                 tree.insert('', 'end', values=(
                     f"#{rank}",
                     it.get('goods_name', '')[:35],
@@ -1061,6 +1099,9 @@ class SupplyFinderTab:
                     it.get('match_src', ''),
                     it.get('是否推荐货源', ''),
                     it.get('匹配说明', '')[:80],
+                    src_display,
+                    comm_str,
+                    it.get('goods_url', ''),
                 ), tags=(tag,))
 
         _fill_tree(self.detail_tree, record.get('pdd_items', []), 'best_src', 'good_src')
